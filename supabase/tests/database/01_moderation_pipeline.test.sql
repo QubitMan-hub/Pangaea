@@ -2,7 +2,7 @@
 -- clients can never mark their own content as approved.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(20);
+select plan(22);
 
 -- Fixtures (as postgres) ------------------------------------------------------
 insert into auth.users (id, email) values
@@ -96,6 +96,22 @@ select is(
   (select moderation_status::text from public.plot_items where id = '00000000-0000-0000-0000-0000000000f1'),
   'approved',
   'moving an item keeps its approval'
+);
+
+select throws_ok(
+  $$ update public.plot_items set position = '{"x":1,"note":"unmoderated words"}'
+     where id = '00000000-0000-0000-0000-0000000000f1' $$,
+  '23514',
+  null,
+  'position cannot carry text past moderation'
+);
+
+select throws_ok(
+  $$ update public.plot_items set position = '{"x":"1"}'
+     where id = '00000000-0000-0000-0000-0000000000f1' $$,
+  '23514',
+  null,
+  'position values must be numbers'
 );
 
 update public.plot_items set content = '{"text":"something new"}'

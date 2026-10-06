@@ -20,7 +20,7 @@
 -- can call them without recursing through RLS. All pin search_path.
 -- ---------------------------------------------------------------------------
 
-create schema private;
+-- (The schema itself is created in the core migration.)
 grant usage on schema private to anon, authenticated, service_role;
 -- Functions are executable by PUBLIC by default; grant explicitly instead.
 alter default privileges in schema private revoke execute on functions from public;
@@ -75,6 +75,7 @@ as $$
 $$;
 
 grant execute on function private.uploaded_asset(text) to anon, authenticated, service_role;
+grant execute on function private.is_valid_position(jsonb) to anon, authenticated, service_role;
 
 -- True if the caller may appeal this target: it must be their own content and
 -- a moderation decision must actually be against it (rejected or blurred

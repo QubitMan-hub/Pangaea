@@ -52,6 +52,29 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- private schema: helpers the Data API never exposes (grants are set in the
+-- access-control migration)
+-- ---------------------------------------------------------------------------
+
+create schema private;
+
+-- A plot item's position: an object whose only keys are x, y, width, height,
+-- angle and z, each a finite number.
+create function private.is_valid_position(value jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select jsonb_typeof(value) = 'object'
+    and not exists (
+      select 1 from jsonb_each(value) e
+      where e.key not in ('x', 'y', 'width', 'height', 'angle', 'z')
+         or jsonb_typeof(e.value) <> 'number'
+    );
+$$;
+
+-- ---------------------------------------------------------------------------
 -- users: public profile, 1:1 with auth.users
 -- ---------------------------------------------------------------------------
 
@@ -241,8 +264,11 @@ create table public.plot_items (
     constraint plot_items_content_object check (jsonb_typeof(content) = 'object')
     -- Large media lives in Storage; content only references it.
     constraint plot_items_content_size check (pg_column_size(content) <= 65536),
+  -- Layout only, never content: moving an item doesn't re-moderate it, so
+  -- position may hold nothing but these numeric fields (otherwise it could
+  -- smuggle unmoderated text onto an approved item).
   position jsonb not null default '{}'::jsonb
-    constraint plot_items_position_object check (jsonb_typeof(position) = 'object'),
+    constraint plot_items_position_shape check (private.is_valid_position(position)),
   -- Media for image items (and later webpage screenshots). Images must come
   -- through the asset pipeline: no hotlinked URLs in content.
   asset_sha256 text references public.assets (sha256) on delete restrict,
