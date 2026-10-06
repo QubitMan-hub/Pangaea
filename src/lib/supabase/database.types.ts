@@ -23,26 +23,86 @@ export type Database = {
           }
         },"public": {
           Tables: {
-            "attention_events": {
+            "asset_sources": {
                   Row: {
-                    "created_at": string,"id": number,"kind": Database["public"]['Enums']["attention_kind"],"plot_id": string,"value": number,"visitor_id": string | null
+                    "asset_sha256": string,"created_at": string,"source_sha256": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: never,"kind": Database["public"]['Enums']["attention_kind"],"plot_id": string,"value"?: number,"visitor_id"?: string | null
+                    "asset_sha256": string,"created_at"?: string,"source_sha256": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: never,"kind"?: Database["public"]['Enums']["attention_kind"],"plot_id"?: string,"value"?: number,"visitor_id"?: string | null
+                    "asset_sha256"?: string,"created_at"?: string,"source_sha256"?: string
                   }
                   Relationships: [
                     {
-      foreignKeyName: "attention_events_plot_id_fkey"
+      foreignKeyName: "asset_sources_asset_sha256_fkey"
+      columns: ["asset_sha256"]
+isOneToOne: false
+      referencedRelation: "assets"
+      referencedColumns: ["sha256"]
+    }
+                  ]
+                },"asset_uploads": {
+                  Row: {
+                    "asset_sha256": string,"created_at": string,"user_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "asset_sha256": string,"created_at"?: string,"user_id": string
+                  }
+                  Update: {
+                    "asset_sha256"?: string,"created_at"?: string,"user_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "asset_uploads_asset_sha256_fkey"
+      columns: ["asset_sha256"]
+isOneToOne: false
+      referencedRelation: "assets"
+      referencedColumns: ["sha256"]
+    },{
+      foreignKeyName: "asset_uploads_user_id_fkey"
+      columns: ["user_id"]
+isOneToOne: false
+      referencedRelation: "users"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"assets": {
+                  Row: {
+                    "byte_size": number,"created_at": string,"height": number,"mime_type": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "byte_size": number,"created_at"?: string,"height": number,"mime_type": string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
+                  }
+                  Update: {
+                    "byte_size"?: number,"created_at"?: string,"height"?: number,"mime_type"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256"?: string,"width"?: number
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"attention_daily": {
+                  Row: {
+                    "credited_score": number,"day": string,"dwell_seconds": number,"is_return_visit": boolean,"plot_id": string,"updated_at": string,"views": number,"visitor_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "credited_score"?: number,"day": string,"dwell_seconds"?: number,"is_return_visit"?: boolean,"plot_id": string,"updated_at"?: string,"views"?: number,"visitor_id": string
+                  }
+                  Update: {
+                    "credited_score"?: number,"day"?: string,"dwell_seconds"?: number,"is_return_visit"?: boolean,"plot_id"?: string,"updated_at"?: string,"views"?: number,"visitor_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "attention_daily_plot_id_fkey"
       columns: ["plot_id"]
 isOneToOne: false
       referencedRelation: "plots"
       referencedColumns: ["id"]
     },{
-      foreignKeyName: "attention_events_visitor_id_fkey"
+      foreignKeyName: "attention_daily_visitor_id_fkey"
       columns: ["visitor_id"]
 isOneToOne: false
       referencedRelation: "users"
@@ -123,17 +183,23 @@ isOneToOne: false
                   ]
                 },"plot_items": {
                   Row: {
-                    "content": NonNullable<Json>,"created_at": string,"id": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"plot_id": string,"position": NonNullable<Json>,"type": Database["public"]['Enums']["plot_item_type"],"updated_at": string
+                    "asset_sha256": string | null,"content": NonNullable<Json>,"created_at": string,"id": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"plot_id": string,"position": NonNullable<Json>,"type": Database["public"]['Enums']["plot_item_type"],"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "content": NonNullable<Json>,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id": string,"position"?: NonNullable<Json>,"type": Database["public"]['Enums']["plot_item_type"],"updated_at"?: string
+                    "asset_sha256"?: string | null,"content": NonNullable<Json>,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id": string,"position"?: NonNullable<Json>,"type": Database["public"]['Enums']["plot_item_type"],"updated_at"?: string
                   }
                   Update: {
-                    "content"?: NonNullable<Json>,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id"?: string,"position"?: NonNullable<Json>,"type"?: Database["public"]['Enums']["plot_item_type"],"updated_at"?: string
+                    "asset_sha256"?: string | null,"content"?: NonNullable<Json>,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id"?: string,"position"?: NonNullable<Json>,"type"?: Database["public"]['Enums']["plot_item_type"],"updated_at"?: string
                   }
                   Relationships: [
                     {
+      foreignKeyName: "plot_items_asset_sha256_fkey"
+      columns: ["asset_sha256"]
+isOneToOne: false
+      referencedRelation: "assets"
+      referencedColumns: ["sha256"]
+    },{
       foreignKeyName: "plot_items_plot_id_fkey"
       columns: ["plot_id"]
 isOneToOne: false
@@ -143,14 +209,14 @@ isOneToOne: false
                   ]
                 },"plots": {
                   Row: {
-                    "base_size": number,"created_at": string,"earned_space": number,"embedding": string | null,"embedding_model": string | null,"grid_x": number | null,"grid_y": number | null,"id": string,"last_active_at": string,"owner_id": string,"region_id": string | null,"status": Database["public"]['Enums']["plot_status"],"summary": string | null,"thumbnail_url": string | null,"updated_at": string
+                    "base_size": number,"created_at": string,"earned_space": number,"earned_space_updated_at": string,"embedding": string | null,"embedding_model": string | null,"grid_x": number | null,"grid_y": number | null,"id": string,"last_active_at": string,"owner_id": string,"region_id": string | null,"status": Database["public"]['Enums']["plot_status"],"summary": string | null,"summary_source_hash": string | null,"thumbnail_url": string | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id": string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
+                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id": string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"summary_source_hash"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id"?: string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
+                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id"?: string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"summary_source_hash"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -292,7 +358,7 @@ isOneToOne: false
                   ]
                 },"plot_items_public": {
                   Row: {
-                    "content": Json | null,"created_at": string | null,"id": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"] | null,"plot_id": string | null,"position": Json | null,"type": Database["public"]['Enums']["plot_item_type"] | null,"updated_at": string | null
+                    "asset_sha256": string | null,"content": Json | null,"created_at": string | null,"id": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"] | null,"plot_id": string | null,"position": Json | null,"type": Database["public"]['Enums']["plot_item_type"] | null,"updated_at": string | null
                   }
                   ComputedFields: never
                   Relationships: [
@@ -310,7 +376,7 @@ isOneToOne: false
             [_ in never]: never
           }
           Enums: {
-            "attention_kind": "view"|"dwell"|"comment"|"return_visit","moderation_status": "pending"|"approved"|"rejected"|"blurred","plot_item_type": "text"|"drawing"|"image"|"link"|"code"|"webpage"|"video"|"document","plot_status": "active"|"suspended","report_status": "open"|"actioned"|"dismissed","report_target": "plot"|"plot_item"|"comment"|"user","staff_role": "moderator"|"admin"
+            "moderation_status": "pending"|"approved"|"rejected"|"blurred","plot_item_type": "text"|"drawing"|"image"|"link"|"code"|"webpage"|"video"|"document","plot_status": "active"|"suspended","report_status": "open"|"actioned"|"dismissed","report_target": "plot"|"plot_item"|"comment"|"user","staff_role": "moderator"|"admin"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -430,7 +496,7 @@ export const Constants = {
           }
         },"public": {
           Enums: {
-            "attention_kind": ["view", "dwell", "comment", "return_visit"],"moderation_status": ["pending", "approved", "rejected", "blurred"],"plot_item_type": ["text", "drawing", "image", "link", "code", "webpage", "video", "document"],"plot_status": ["active", "suspended"],"report_status": ["open", "actioned", "dismissed"],"report_target": ["plot", "plot_item", "comment", "user"],"staff_role": ["moderator", "admin"]
+            "moderation_status": ["pending", "approved", "rejected", "blurred"],"plot_item_type": ["text", "drawing", "image", "link", "code", "webpage", "video", "document"],"plot_status": ["active", "suspended"],"report_status": ["open", "actioned", "dismissed"],"report_target": ["plot", "plot_item", "comment", "user"],"staff_role": ["moderator", "admin"]
           }
         }
 } as const

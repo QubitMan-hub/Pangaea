@@ -60,6 +60,21 @@ as $$
   );
 $$;
 
+-- True if the current user uploaded this asset (so they may place it).
+create function private.uploaded_asset(target_asset_sha256 text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.asset_uploads au
+    where au.asset_sha256 = target_asset_sha256 and au.user_id = (select auth.uid())
+  );
+$$;
+
+grant execute on function private.uploaded_asset(text) to anon, authenticated, service_role;
 grant execute on function private.is_staff() to anon, authenticated, service_role;
 grant execute on function private.owns_plot(uuid) to anon, authenticated, service_role;
 grant execute on function private.plot_is_active(uuid) to anon, authenticated, service_role;
@@ -79,7 +94,10 @@ alter table public.plot_items enable row level security;
 alter table public.comments enable row level security;
 alter table public.missions enable row level security;
 alter table public.mission_completions enable row level security;
-alter table public.attention_events enable row level security;
+alter table public.attention_daily enable row level security;
+alter table public.assets enable row level security;
+alter table public.asset_sources enable row level security;
+alter table public.asset_uploads enable row level security;
 alter table public.region_visits enable row level security;
 alter table public.reports enable row level security;
 
@@ -148,21 +166,28 @@ create policy plots_select_visible on public.plots
 -- ---------------------------------------------------------------------------
 
 grant select, delete on public.plot_items to authenticated;
-grant insert (id, plot_id, type, content, position) on public.plot_items to authenticated;
-grant update (content, position) on public.plot_items to authenticated;
+grant insert (id, plot_id, type, content, position, asset_sha256) on public.plot_items to authenticated;
+grant update (content, position, asset_sha256) on public.plot_items to authenticated;
 
 create policy plot_items_select_owner_or_staff on public.plot_items
   for select to authenticated
   using ((select private.owns_plot(plot_id)) or (select private.is_staff()));
 
+-- Owners may only place assets they uploaded themselves.
 create policy plot_items_insert_owner on public.plot_items
   for insert to authenticated
-  with check ((select private.owns_plot(plot_id)));
+  with check (
+    (select private.owns_plot(plot_id))
+    and (asset_sha256 is null or (select private.uploaded_asset(asset_sha256)))
+  );
 
 create policy plot_items_update_owner on public.plot_items
   for update to authenticated
   using ((select private.owns_plot(plot_id)))
-  with check ((select private.owns_plot(plot_id)));
+  with check (
+    (select private.owns_plot(plot_id))
+    and (asset_sha256 is null or (select private.uploaded_asset(asset_sha256)))
+  );
 
 create policy plot_items_delete_owner on public.plot_items
   for delete to authenticated
@@ -214,9 +239,31 @@ create policy region_visits_select_own on public.region_visits
   using (user_id = (select auth.uid()));
 
 -- ---------------------------------------------------------------------------
--- attention_events: no client access at all. Attention is recorded by the
--- server so per-visitor caps can't be bypassed. (RLS on, no policies.)
+-- attention_daily & asset_sources: no client access at all (RLS on, no
+-- policies, no grants). Attention is folded in by the server so per-visitor
+-- caps can't be bypassed.
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- assets: anyone may read metadata of approved assets; uploaders also see
+-- their own pending/rejected ones (with the reason). Written server-side.
+-- ---------------------------------------------------------------------------
+
+grant select on public.assets to anon, authenticated;
+
+create policy assets_select_approved_or_own on public.assets
+  for select to anon, authenticated
+  using (
+    moderation_status = 'approved'
+    or (select private.uploaded_asset(sha256))
+    or (select private.is_staff())
+  );
+
+grant select on public.asset_uploads to authenticated;
+
+create policy asset_uploads_select_own on public.asset_uploads
+  for select to authenticated
+  using (user_id = (select auth.uid()));
 
 -- ---------------------------------------------------------------------------
 -- reports: signed-in users file reports as themselves and can see their own.
@@ -255,12 +302,16 @@ select
   -- Blurred (reported, under review) items keep their slot on the plot but
   -- their content is withheld.
   case when i.moderation_status = 'approved' then i.content end as content,
+  case when i.moderation_status = 'approved' then i.asset_sha256 end as asset_sha256,
   i.created_at,
   i.updated_at
 from public.plot_items i
 join public.plots p on p.id = i.plot_id
+left join public.assets a on a.sha256 = i.asset_sha256
 where p.status = 'active'
-  and i.moderation_status in ('approved', 'blurred');
+  and i.moderation_status in ('approved', 'blurred')
+  -- Defense in depth: an item never shows media that isn't itself approved.
+  and (i.asset_sha256 is null or a.moderation_status = 'approved');
 
 create view public.comments_public
 with (security_barrier = true)

@@ -3,7 +3,7 @@
 -- Column grants already stop clients writing moderation columns. These
 -- triggers add the rules grants can't express:
 --   * anything a client creates starts as 'pending'
---   * any client change to content sends it back to 'pending'
+--   * any client change to content or media sends it back to 'pending'
 --   * item types are gated by trust level (brief 5.4.3)
 -- The server (service_role, or postgres in scheduled jobs) is exempt: it is
 -- what moderates.
@@ -35,7 +35,10 @@ as $$
   end;
 $$;
 
--- Records owner activity on a plot (slows decay, brief 5.2). Security definer
+-- Records owner activity on a plot (slows decay, brief 5.2).
+-- Phase 4: once decay has an activity grace period, this must first bring
+-- earned_space up to date (docs/architecture.md, "Growth") before moving
+-- last_active_at, or the on-read decay formula stops being exact. Security definer
 -- because clients cannot update plots; only reachable from triggers since
 -- the private schema is not exposed, and it only touches the caller's plot.
 create function private.bump_plot_activity(target_plot_id uuid)
@@ -93,7 +96,8 @@ begin
   new.type := old.type;
   new.created_at := old.created_at;
 
-  if new.content is distinct from old.content then
+  if new.content is distinct from old.content
+    or new.asset_sha256 is distinct from old.asset_sha256 then
     new.moderation_status := 'pending';
     new.moderation_reason := null;
     new.moderated_at := null;

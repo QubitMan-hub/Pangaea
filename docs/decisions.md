@@ -48,7 +48,14 @@ with `VOYAGE_MODEL`.
 - **`reports`**: added `resolved_by` and `resolved_at`; one report per reporter per target.
 - **`mission_completions`**: one completion per user per mission, since the MVP missions are
   one-time.
-- **`attention_events`**: written only by the server, so per-visitor daily caps can't be bypassed.
+- **`attention_daily`** replaces `attention_events`: one row per plot, visitor and day, folded in
+  server-side from batched browser reports. `credited_score` makes the per-visitor daily cap exact.
+  No client access.
+- **`assets`, `asset_sources`, `asset_uploads`** (new): content-addressed media. Image items must
+  reference an asset (no hotlinked URLs). Users can only place assets they uploaded. An item is
+  public only if its asset is approved too, so taking down one asset hides it everywhere.
+- **`plots.earned_space_updated_at`** (new): earned space is a value plus a timestamp and decays on
+  read. **`plots.summary_source_hash`** (new): skips AI calls when approved content hasn't changed.
 - The four MVP missions are inserted by a migration. Their reward points are placeholders.
 
 ### Access model
@@ -69,10 +76,16 @@ with `VOYAGE_MODEL`.
 
 ### Storage
 
-Three buckets: `uploads` (private, owner-only, unmoderated), `media` (public, only approved images,
-written by the server) and `thumbnails` (public, server-rendered PNGs). Images are limited to PNG,
-JPEG and WebP up to 10 MB. SVG is excluded because it can carry script. GIF is excluded for now
-because image moderation usually checks a single frame.
+Revised after the efficiency direction (see `docs/architecture.md`): production object storage is
+Cloudflare R2 behind its CDN, reached only through the S3 API. There are two buckets. `private`
+holds raw uploads and media awaiting moderation. `public` holds only approved media, thumbnails,
+tiles and snapshots, all under content-addressed keys. Locally, Supabase Storage provides both
+buckets through its S3 endpoint. Clients upload with presigned URLs, so there are no storage RLS
+policies. Uploads are re-encoded to WebP and GIFs are flattened to their first frame, so GIFs are
+now accepted and moderation sees exactly what is shown. SVG is never accepted.
+
+The Phase 0 migrations were edited in place for this rather than amended with new migrations,
+because nothing had been deployed yet.
 
 ### Seed data
 
@@ -103,6 +116,25 @@ non-commercial.
 development-only dependency (linting) and doesn't ship to users. Clearing it needs a breaking
 `eslint-config-next` downgrade, so it is left until Next publishes a fix.
 
+## Efficiency direction (after Phase 0 review)
+
+Adopted: pre-baked map tiles, zoom-based detail, re-encoding and content-addressed media, R2 + CDN,
+AI only on real changes with Haiku and the Batch API, decay computed on read, batched attention,
+no real-time servers. Full design: `docs/architecture.md`. Where it pushes back:
+
+- **Decay vs pre-baked tiles.** Continuous decay would make every plot's size change constantly,
+  which would mean constant rebakes. Footprints change in steps instead, and only plots crossing a
+  step get rebaked.
+- **Haiku vs Sonnet.** Haiku 4.5 ($1/$5 per million tokens) is only half the price of Sonnet 5.5
+  ($2/$10). The content-hash gate and the debounce save far more than the model choice.
+- **AVIF.** WebP is used for stored media because encoding AVIF costs far more CPU per upload.
+- **Hash dedupe.** It catches byte-identical files only. It doesn't replace perceptual hashing for
+  known abuse material.
+- **Tiles and takedowns.** Cached images outlive deletions unless takedowns re-render with
+  priority, delete the old objects and purge the CDN. This is designed in.
+- **Cold storage.** Deferred: it saves almost nothing at this scale and adds retrieval fees.
+- **Default model changed** from `claude-sonnet-5-5` to `claude-haiku-4-5`, as you asked.
+
 ## Open questions for the product owner
 
 1. **Moderation vendors.** The brief asks for one text and one image API. Do you have a preference?
@@ -120,3 +152,10 @@ development-only dependency (linting) and doesn't ship to users. Clearing it nee
    return visits.
 6. **Handles at signup.** Pick one during onboarding (proposal), or generate one and let users
    change it?
+7. **Where should the background worker run?** It renders thumbnails and tiles, writes snapshots,
+   escalates moderation and submits AI batches. Options: a small always-on container (Fly.io,
+   Railway, Cloud Run), or time-boxed scheduled runs of a Next.js route. Proposal: start with the
+   scheduled route because it's simplest, and move to a container once rendering volume justifies
+   it.
+8. **Cloudflare account and domain.** R2 and the CDN need a Cloudflare account and a domain (or
+   subdomain) for the public bucket, for example `cdn.<your domain>`. Not needed until we deploy.

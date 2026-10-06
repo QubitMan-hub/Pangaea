@@ -3,8 +3,9 @@
 Reddit, but as one giant whiteboard. One infinite board shared by the whole world, where every user
 gets a plot and Claude arranges plots into "continents" of related ideas.
 
-The product brief, which is the source of truth, is in [`CLAUDE.md`](CLAUDE.md). Design decisions
-and open questions are in [`docs/decisions.md`](docs/decisions.md).
+The product brief, which is the source of truth, is in [`CLAUDE.md`](CLAUDE.md). How the system
+keeps viewing nearly free is in [`docs/architecture.md`](docs/architecture.md). Design decisions and
+open questions are in [`docs/decisions.md`](docs/decisions.md).
 
 **Status:** Phase 0 (setup) is done. Phase 1 (plots, auth, editor, moderation) is next.
 
@@ -62,6 +63,7 @@ supabase/
   tests/database/         pgTAP tests
   seed.sql                Intentionally empty, see the note inside
 scripts/                  Dev scripts (run with tsx)
+docs/architecture.md      Read path, tiles, uploads, AI spend, growth math, hosting
 docs/decisions.md         Decisions, deviations from the brief, open questions
 ```
 
@@ -82,7 +84,9 @@ hand-crafted API request can't bypass them:
   earned space, summary, thumbnail) is system-managed and written with the service role.
 - **Trust levels** gate item types at the database level (webpages, video and documents need
   level 1).
-- **Uploads** go to a private bucket. Only approved images are copied to the public `media` bucket.
+- **Media is content-addressed and moderated once.** Image items must reference an asset the
+  uploader actually uploaded, and an item is public only while its asset is approved too. Uploads
+  land in a private bucket; only approved media is copied to the public one.
 
 The service-role client in `src/lib/supabase/admin.ts` bypasses all of this. Use it only in trusted
 server code.

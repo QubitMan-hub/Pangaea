@@ -9,16 +9,23 @@ const base = {
 };
 
 describe("serverEnvSchema", () => {
-  it("applies defaults from the brief", () => {
+  it("applies the documented defaults", () => {
     const env = parseEnv(serverEnvSchema, base);
-    expect(env.ANTHROPIC_MODEL).toBe("claude-sonnet-5-5");
+    expect(env.ANTHROPIC_MODEL).toBe("claude-haiku-4-5");
     expect(env.VOYAGE_MODEL).toBe("voyage-4");
     expect(env.EARNED_SPACE_HALF_LIFE_DAYS).toBe(30);
+    expect(env.S3_REGION).toBe("auto");
+    expect(env.S3_PUBLIC_BUCKET).toBe("public");
+  });
+
+  it("treats an empty S3 endpoint as unset", () => {
+    const env = parseEnv(serverEnvSchema, { ...base, S3_ENDPOINT: "" });
+    expect(env.S3_ENDPOINT).toBeUndefined();
   });
 
   it("lets ANTHROPIC_MODEL be overridden", () => {
-    const env = parseEnv(serverEnvSchema, { ...base, ANTHROPIC_MODEL: "claude-opus-5-5" });
-    expect(env.ANTHROPIC_MODEL).toBe("claude-opus-5-5");
+    const env = parseEnv(serverEnvSchema, { ...base, ANTHROPIC_MODEL: "claude-sonnet-5-5" });
+    expect(env.ANTHROPIC_MODEL).toBe("claude-sonnet-5-5");
   });
 
   it("treats empty optional secrets as unset", () => {

@@ -32,6 +32,13 @@ const values: Record<string, string | undefined> = {
   NEXT_PUBLIC_SUPABASE_URL: status.API_URL,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: status.PUBLISHABLE_KEY,
   SUPABASE_SECRET_KEY: status.SECRET_KEY,
+  S3_ENDPOINT: status.STORAGE_S3_URL,
+  S3_REGION: status.S3_PROTOCOL_REGION,
+  S3_ACCESS_KEY_ID: status.S3_PROTOCOL_ACCESS_KEY_ID,
+  S3_SECRET_ACCESS_KEY: status.S3_PROTOCOL_ACCESS_KEY_SECRET,
+  NEXT_PUBLIC_ASSET_BASE_URL: status.API_URL
+    ? `${status.API_URL}/storage/v1/object/public/public`
+    : undefined,
 };
 
 const output = readFileSync(".env.example", "utf8")
@@ -44,4 +51,4 @@ const output = readFileSync(".env.example", "utf8")
   .join("\n");
 
 writeFileSync(target, output);
-console.log(`Wrote ${target} with local Supabase credentials.`);
+console.log(`Wrote ${target} with local Supabase and storage credentials.`);

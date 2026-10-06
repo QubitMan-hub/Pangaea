@@ -17,8 +17,6 @@ create type public.plot_item_type as enum (
 -- 'suspended' hides a whole plot from the public (e.g. owner banned).
 create type public.plot_status as enum ('active', 'suspended');
 
-create type public.attention_kind as enum ('view', 'dwell', 'comment', 'return_visit');
-
 create type public.report_target as enum ('plot', 'plot_item', 'comment', 'user');
 
 create type public.report_status as enum ('open', 'actioned', 'dismissed');
@@ -109,12 +107,18 @@ create table public.plots (
   -- Footprint size; exact units (cells per side) are settled in Phase 4.
   base_size integer not null default 1
     constraint plots_base_size_positive check (base_size > 0),
-  -- Decays exponentially; recomputed by a scheduled job (brief 5.2).
+  -- Earned space as of earned_space_updated_at. It decays exponentially and
+  -- is computed on read; no job rewrites it (docs/architecture.md, "Growth").
+  -- Any write first brings it up to date, then adds the new points.
   earned_space double precision not null default 0
     constraint plots_earned_space_nonnegative check (earned_space >= 0),
+  earned_space_updated_at timestamptz not null default now(),
   last_active_at timestamptz not null default now(),
   -- Derived ONLY from approved content by the server.
   summary text,
+  -- Hash of the approved content `summary` was built from. If the content
+  -- hash hasn't changed, no AI call is made (docs/architecture.md, "AI").
+  summary_source_hash text,
   embedding extensions.vector(1024),
   -- Which embedding model produced `embedding`, so a model change can be detected.
   embedding_model text,
@@ -133,6 +137,52 @@ create trigger plots_set_updated_at
   for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
+-- assets: content-addressed media (docs/architecture.md, "Uploads")
+--
+-- Every image is re-encoded server-side (WebP, resized, metadata stripped)
+-- and stored once under the SHA-256 of the result, then moderated once. The
+-- same meme uploaded a thousand times is one row, one object, one scan.
+-- ---------------------------------------------------------------------------
+
+create table public.assets (
+  sha256 text primary key
+    constraint assets_sha256_format check (sha256 ~ '^[0-9a-f]{64}$'),
+  mime_type text not null
+    constraint assets_mime_type check (mime_type in ('image/webp', 'image/avif')),
+  byte_size integer not null
+    constraint assets_byte_size_positive check (byte_size > 0),
+  width integer not null
+    constraint assets_width_positive check (width > 0),
+  height integer not null
+    constraint assets_height_positive check (height > 0),
+  moderation_status public.moderation_status not null default 'pending',
+  moderation_reason text,
+  moderated_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- Maps the hash of an original upload to the asset it produced, so a
+-- byte-identical re-upload skips re-encoding and moderation entirely.
+create table public.asset_sources (
+  source_sha256 text primary key
+    constraint asset_sources_sha256_format check (source_sha256 ~ '^[0-9a-f]{64}$'),
+  asset_sha256 text not null references public.assets (sha256) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create index asset_sources_asset_idx on public.asset_sources (asset_sha256);
+
+-- Who uploaded what. A user may only place assets they uploaded themselves.
+create table public.asset_uploads (
+  asset_sha256 text not null references public.assets (sha256) on delete cascade,
+  user_id uuid not null references public.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (asset_sha256, user_id)
+);
+
+create index asset_uploads_user_idx on public.asset_uploads (user_id);
+
+-- ---------------------------------------------------------------------------
 -- plot_items: the things on a plot
 -- ---------------------------------------------------------------------------
 
@@ -146,15 +196,20 @@ create table public.plot_items (
     constraint plot_items_content_size check (pg_column_size(content) <= 65536),
   position jsonb not null default '{}'::jsonb
     constraint plot_items_position_object check (jsonb_typeof(position) = 'object'),
+  -- Media for image items (and later webpage screenshots). Images must come
+  -- through the asset pipeline: no hotlinked URLs in content.
+  asset_sha256 text references public.assets (sha256) on delete restrict,
   moderation_status public.moderation_status not null default 'pending',
   -- Shown to the owner when rejected.
   moderation_reason text,
   moderated_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint plot_items_image_has_asset check (type <> 'image' or asset_sha256 is not null)
 );
 
 create index plot_items_plot_id_idx on public.plot_items (plot_id);
+create index plot_items_asset_idx on public.plot_items (asset_sha256) where asset_sha256 is not null;
 create index plot_items_pending_idx on public.plot_items (created_at)
   where moderation_status = 'pending';
 
@@ -222,21 +277,36 @@ create table public.mission_completions (
 create index mission_completions_user_id_idx on public.mission_completions (user_id);
 
 -- ---------------------------------------------------------------------------
--- attention_events: raw signal for the growth job (written server-side only)
+-- attention_daily: one row per plot, visitor and day (written server-side only)
+--
+-- The browser batches views and dwell time and flushes them every ~30 s. The
+-- server folds each batch into this row instead of storing raw events, so the
+-- table grows with unique daily visitors, not with clicks. `credited_score`
+-- is how much of this visitor's capped daily contribution has already been
+-- added to the plot's earned space, which makes the per-visitor daily cap
+-- exact (brief 5.2).
 -- ---------------------------------------------------------------------------
 
-create table public.attention_events (
-  id bigint generated always as identity primary key,
+create table public.attention_daily (
   plot_id uuid not null references public.plots (id) on delete cascade,
-  visitor_id uuid references public.users (id) on delete set null,
-  kind public.attention_kind not null,
-  value double precision not null default 1
-    constraint attention_events_value_nonnegative check (value >= 0),
-  created_at timestamptz not null default now()
+  visitor_id uuid not null references public.users (id) on delete cascade,
+  day date not null,
+  views integer not null default 0
+    constraint attention_daily_views_nonnegative check (views >= 0),
+  dwell_seconds integer not null default 0
+    constraint attention_daily_dwell_nonnegative check (dwell_seconds >= 0),
+  is_return_visit boolean not null default false,
+  credited_score double precision not null default 0
+    constraint attention_daily_credited_nonnegative check (credited_score >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (plot_id, visitor_id, day)
 );
 
-create index attention_events_plot_time_idx on public.attention_events (plot_id, created_at);
-create index attention_events_visitor_time_idx on public.attention_events (visitor_id, created_at);
+create index attention_daily_visitor_idx on public.attention_daily (visitor_id, day);
+
+create trigger attention_daily_set_updated_at
+  before update on public.attention_daily
+  for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- region_visits: powers "wander" (unvisited regions) and the visit mission

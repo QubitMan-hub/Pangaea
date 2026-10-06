@@ -2,7 +2,7 @@
 -- reach anything unmoderated or system-managed.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(10);
 
 select is(
   (
@@ -38,8 +38,8 @@ select ok(
 );
 
 select ok(
-  not has_table_privilege('authenticated', 'public.attention_events', 'SELECT, INSERT'),
-  'clients cannot read or write attention_events'
+  not has_table_privilege('authenticated', 'public.attention_daily', 'SELECT, INSERT, UPDATE'),
+  'clients cannot read or write attention_daily'
 );
 
 select ok(
@@ -57,9 +57,19 @@ select ok(
   not exists (
     select 1 from information_schema.routines
     where routine_schema = 'public'
-      and routine_name in ('is_staff', 'owns_plot', 'plot_is_active', 'bump_plot_activity')
+      and routine_name in ('is_staff', 'owns_plot', 'plot_is_active', 'bump_plot_activity', 'uploaded_asset')
   ),
   'privileged helpers are not exposed in the public (API) schema'
+);
+
+select ok(
+  not has_table_privilege('authenticated', 'public.assets', 'INSERT, UPDATE, DELETE'),
+  'clients cannot create or approve assets'
+);
+
+select ok(
+  not has_column_privilege('authenticated', 'public.plots', 'earned_space_updated_at', 'UPDATE'),
+  'clients cannot move the earned-space clock'
 );
 
 select * from finish();
