@@ -11,11 +11,34 @@ const base = {
 describe("serverEnvSchema", () => {
   it("applies the documented defaults", () => {
     const env = parseEnv(serverEnvSchema, base);
-    expect(env.ANTHROPIC_MODEL).toBe("claude-haiku-4-5");
-    expect(env.VOYAGE_MODEL).toBe("voyage-4");
+    expect(env.ANTHROPIC_MODEL).toBe("claude-haiku-4-5-20251001");
+    expect(env.VOYAGE_MODEL).toBe("voyage-4-lite");
+    expect(env.VOYAGE_DIMENSIONS).toBe(512);
+    expect(env.CLAUDE_DAILY_BUDGET_USD).toBe(1);
+    expect(env.PLOT_MAX_MEDIA_BYTES).toBe(10 * 1024 * 1024);
+    expect(env.PLOT_MAX_IMAGES).toBe(30);
+    expect(env.USER_MAX_UPLOADS_PER_DAY).toBe(30);
     expect(env.EARNED_SPACE_HALF_LIFE_DAYS).toBe(30);
     expect(env.S3_REGION).toBe("auto");
     expect(env.S3_PUBLIC_BUCKET).toBe("public");
+  });
+
+  it("accepts the embedding dimension as an env string", () => {
+    expect(parseEnv(serverEnvSchema, { ...base, VOYAGE_DIMENSIONS: "512" }).VOYAGE_DIMENSIONS).toBe(
+      512,
+    );
+  });
+
+  it("refuses embedding dimensions that don't match the database", () => {
+    expect(() => parseEnv(serverEnvSchema, { ...base, VOYAGE_DIMENSIONS: "1024" })).toThrow(
+      /VOYAGE_DIMENSIONS/,
+    );
+  });
+
+  it("rejects a negative Claude budget", () => {
+    expect(() => parseEnv(serverEnvSchema, { ...base, CLAUDE_DAILY_BUDGET_USD: "-1" })).toThrow(
+      /CLAUDE_DAILY_BUDGET_USD/,
+    );
   });
 
   it("treats an empty S3 endpoint as unset", () => {
@@ -26,6 +49,20 @@ describe("serverEnvSchema", () => {
   it("lets ANTHROPIC_MODEL be overridden", () => {
     const env = parseEnv(serverEnvSchema, { ...base, ANTHROPIC_MODEL: "claude-sonnet-5-5" });
     expect(env.ANTHROPIC_MODEL).toBe("claude-sonnet-5-5");
+  });
+
+  it("treats blank numeric settings as unset, never as zero", () => {
+    const env = parseEnv(serverEnvSchema, {
+      ...base,
+      CLAUDE_DAILY_BUDGET_USD: "",
+      PLOT_MAX_IMAGES: "",
+      VOYAGE_DIMENSIONS: "",
+      EARNED_SPACE_HALF_LIFE_DAYS: "",
+    });
+    expect(env.CLAUDE_DAILY_BUDGET_USD).toBe(1);
+    expect(env.PLOT_MAX_IMAGES).toBe(30);
+    expect(env.VOYAGE_DIMENSIONS).toBe(512);
+    expect(env.EARNED_SPACE_HALF_LIFE_DAYS).toBe(30);
   });
 
   it("treats empty optional secrets as unset", () => {

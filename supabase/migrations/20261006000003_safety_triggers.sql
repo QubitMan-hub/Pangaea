@@ -30,7 +30,7 @@ immutable
 set search_path = ''
 as $$
   select case
-    when item_type in ('text', 'drawing', 'image', 'link', 'code') then 0::smallint
+    when item_type in ('description', 'text', 'drawing', 'image', 'link', 'code') then 0::smallint
     else 1::smallint
   end;
 $$;
@@ -128,6 +128,25 @@ begin
 end;
 $$;
 
+-- A plot always keeps its description: owners edit it, never delete it.
+create function private.plot_items_keep_description()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if private.is_client_role() and old.type = 'description' then
+    raise exception 'A plot always has a description. Edit it instead.'
+      using errcode = 'insufficient_privilege';
+  end if;
+  return old;
+end;
+$$;
+
+create trigger plot_items_keep_description
+  before delete on public.plot_items
+  for each row execute function private.plot_items_keep_description();
+
 create trigger plot_items_touch_activity
   after insert or update or delete on public.plot_items
   for each row execute function private.plot_items_touch_activity();
@@ -147,10 +166,15 @@ begin
   end if;
 
   if tg_op = 'UPDATE' then
+    if old.deleted_at is not null then
+      raise exception 'This comment was deleted' using errcode = 'insufficient_privilege';
+    end if;
     new.id := old.id;
     new.plot_id := old.plot_id;
     new.author_id := old.author_id;
     new.created_at := old.created_at;
+    new.deleted_at := old.deleted_at;
+    new.deleted_by := old.deleted_by;
     if new.body is not distinct from old.body then
       new.moderation_status := old.moderation_status;
       new.moderation_reason := old.moderation_reason;
@@ -185,6 +209,12 @@ begin
     new.resolved_by := null;
     new.resolved_at := null;
   end if;
+  -- Trust snapshot and weight are always derived here, never taken from the
+  -- client (docs/decisions.md ADR-015).
+  select u.trust_level into new.reporter_trust_level
+    from public.users u where u.id = new.reporter_id;
+  new.reporter_trust_level := coalesce(new.reporter_trust_level, 0);
+  new.weight := case new.reporter_trust_level when 2 then 1.0 when 1 then 0.5 else 0.25 end;
   return new;
 end;
 $$;
@@ -195,3 +225,26 @@ create trigger reports_guard
 
 -- Trigger functions run with the table's trigger machinery; they need no
 -- direct EXECUTE grant for that, so none is given.
+
+-- ---------------------------------------------------------------------------
+-- appeals: clients can only open appeals.
+-- ---------------------------------------------------------------------------
+
+create function private.appeals_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if private.is_client_role() then
+    new.status := 'open';
+    new.resolved_by := null;
+    new.resolved_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger appeals_guard
+  before insert on public.appeals
+  for each row execute function private.appeals_guard();

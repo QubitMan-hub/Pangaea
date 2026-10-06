@@ -23,7 +23,47 @@ export type Database = {
           }
         },"public": {
           Tables: {
-            "asset_sources": {
+            "ai_spend_daily": {
+                  Row: {
+                    "day": string,"estimated_cost_usd": number,"input_tokens": number,"output_tokens": number,"purpose": Database["public"]['Enums']["ai_purpose"],"requests": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "day": string,"estimated_cost_usd"?: number,"input_tokens"?: number,"output_tokens"?: number,"purpose": Database["public"]['Enums']["ai_purpose"],"requests"?: number
+                  }
+                  Update: {
+                    "day"?: string,"estimated_cost_usd"?: number,"input_tokens"?: number,"output_tokens"?: number,"purpose"?: Database["public"]['Enums']["ai_purpose"],"requests"?: number
+                  }
+                  Relationships: [
+                    
+                  ]
+                },"appeals": {
+                  Row: {
+                    "created_at": string,"id": string,"message": string,"resolved_at": string | null,"resolved_by": string | null,"status": Database["public"]['Enums']["appeal_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"],"user_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"message": string,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["appeal_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"],"user_id": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"message"?: string,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["appeal_status"],"target_id"?: string,"target_type"?: Database["public"]['Enums']["report_target"],"user_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "appeals_resolved_by_fkey"
+      columns: ["resolved_by"]
+isOneToOne: false
+      referencedRelation: "users"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "appeals_user_id_fkey"
+      columns: ["user_id"]
+isOneToOne: false
+      referencedRelation: "users"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"asset_sources": {
                   Row: {
                     "asset_sha256": string,"created_at": string,"source_sha256": string
                   }
@@ -71,14 +111,14 @@ isOneToOne: false
                   ]
                 },"assets": {
                   Row: {
-                    "byte_size": number,"created_at": string,"height": number,"mime_type": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
+                    "ai_description": string | null,"byte_size": number,"claude_checked_at": string | null,"created_at": string,"height": number,"mime_type": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "byte_size": number,"created_at"?: string,"height": number,"mime_type": string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
+                    "ai_description"?: string | null,"byte_size": number,"claude_checked_at"?: string | null,"created_at"?: string,"height": number,"mime_type": string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256": string,"width": number
                   }
                   Update: {
-                    "byte_size"?: number,"created_at"?: string,"height"?: number,"mime_type"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256"?: string,"width"?: number
+                    "ai_description"?: string | null,"byte_size"?: number,"claude_checked_at"?: string | null,"created_at"?: string,"height"?: number,"mime_type"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"sha256"?: string,"width"?: number
                   }
                   Relationships: [
                     
@@ -111,19 +151,25 @@ isOneToOne: false
                   ]
                 },"comments": {
                   Row: {
-                    "author_id": string,"body": string,"created_at": string,"id": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"plot_id": string,"updated_at": string
+                    "author_id": string,"body": string,"created_at": string,"deleted_at": string | null,"deleted_by": string | null,"id": string,"moderated_at": string | null,"moderation_reason": string | null,"moderation_status": Database["public"]['Enums']["moderation_status"],"plot_id": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "author_id": string,"body": string,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id": string,"updated_at"?: string
+                    "author_id": string,"body": string,"created_at"?: string,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id": string,"updated_at"?: string
                   }
                   Update: {
-                    "author_id"?: string,"body"?: string,"created_at"?: string,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id"?: string,"updated_at"?: string
+                    "author_id"?: string,"body"?: string,"created_at"?: string,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"moderated_at"?: string | null,"moderation_reason"?: string | null,"moderation_status"?: Database["public"]['Enums']["moderation_status"],"plot_id"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
       foreignKeyName: "comments_author_id_fkey"
       columns: ["author_id"]
+isOneToOne: false
+      referencedRelation: "users"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "comments_deleted_by_fkey"
+      columns: ["deleted_by"]
 isOneToOne: false
       referencedRelation: "users"
       referencedColumns: ["id"]
@@ -134,6 +180,20 @@ isOneToOne: false
       referencedRelation: "plots"
       referencedColumns: ["id"]
     }
+                  ]
+                },"continents": {
+                  Row: {
+                    "created_at": string,"id": string,"label": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"label": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"label"?: string
+                  }
+                  Relationships: [
+                    
                   ]
                 },"mission_completions": {
                   Row: {
@@ -209,14 +269,14 @@ isOneToOne: false
                   ]
                 },"plots": {
                   Row: {
-                    "base_size": number,"created_at": string,"earned_space": number,"earned_space_updated_at": string,"embedding": string | null,"embedding_model": string | null,"grid_x": number | null,"grid_y": number | null,"id": string,"last_active_at": string,"owner_id": string,"region_id": string | null,"status": Database["public"]['Enums']["plot_status"],"summary": string | null,"summary_source_hash": string | null,"thumbnail_url": string | null,"updated_at": string
+                    "base_size": number,"cold_storage_key": string | null,"created_at": string,"display_view_count": number,"earned_space": number,"earned_space_updated_at": string,"embedding": unknown,"embedding_model": string | null,"grid_x": number | null,"grid_y": number | null,"id": string,"last_active_at": string,"last_visited_at": string,"owner_id": string,"placement": Database["public"]['Enums']["placement_kind"],"region_id": string | null,"snapshot_version": number,"status": Database["public"]['Enums']["plot_status"],"text_hash": string | null,"thumb_hash": string | null,"thumbnail_asset_sha256": string | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id": string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"summary_source_hash"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
+                    "base_size"?: number,"cold_storage_key"?: string | null,"created_at"?: string,"display_view_count"?: number,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: unknown,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"last_visited_at"?: string,"owner_id": string,"placement"?: Database["public"]['Enums']["placement_kind"],"region_id"?: string | null,"snapshot_version"?: number,"status"?: Database["public"]['Enums']["plot_status"],"text_hash"?: string | null,"thumb_hash"?: string | null,"thumbnail_asset_sha256"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "base_size"?: number,"created_at"?: string,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: string | null,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"owner_id"?: string,"region_id"?: string | null,"status"?: Database["public"]['Enums']["plot_status"],"summary"?: string | null,"summary_source_hash"?: string | null,"thumbnail_url"?: string | null,"updated_at"?: string
+                    "base_size"?: number,"cold_storage_key"?: string | null,"created_at"?: string,"display_view_count"?: number,"earned_space"?: number,"earned_space_updated_at"?: string,"embedding"?: unknown,"embedding_model"?: string | null,"grid_x"?: number | null,"grid_y"?: number | null,"id"?: string,"last_active_at"?: string,"last_visited_at"?: string,"owner_id"?: string,"placement"?: Database["public"]['Enums']["placement_kind"],"region_id"?: string | null,"snapshot_version"?: number,"status"?: Database["public"]['Enums']["plot_status"],"text_hash"?: string | null,"thumb_hash"?: string | null,"thumbnail_asset_sha256"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -231,6 +291,12 @@ isOneToOne: true
 isOneToOne: false
       referencedRelation: "regions"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "plots_thumbnail_asset_sha256_fkey"
+      columns: ["thumbnail_asset_sha256"]
+isOneToOne: false
+      referencedRelation: "assets"
+      referencedColumns: ["sha256"]
     }
                   ]
                 },"region_visits": {
@@ -261,28 +327,34 @@ isOneToOne: false
                   ]
                 },"regions": {
                   Row: {
-                    "center_x": number,"center_y": number,"centroid_embedding": string | null,"created_at": string,"id": string,"is_frontier": boolean,"label": string,"plot_count": number,"updated_at": string
+                    "center_x": number,"center_y": number,"centroid_embedding": unknown,"color_slot": number,"continent_id": string | null,"created_at": string,"id": string,"is_frontier": boolean,"label": string,"plot_count": number,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "center_x": number,"center_y": number,"centroid_embedding"?: string | null,"created_at"?: string,"id"?: string,"is_frontier"?: boolean,"label": string,"plot_count"?: number,"updated_at"?: string
+                    "center_x": number,"center_y": number,"centroid_embedding"?: unknown,"color_slot"?: number,"continent_id"?: string | null,"created_at"?: string,"id"?: string,"is_frontier"?: boolean,"label": string,"plot_count"?: number,"updated_at"?: string
                   }
                   Update: {
-                    "center_x"?: number,"center_y"?: number,"centroid_embedding"?: string | null,"created_at"?: string,"id"?: string,"is_frontier"?: boolean,"label"?: string,"plot_count"?: number,"updated_at"?: string
+                    "center_x"?: number,"center_y"?: number,"centroid_embedding"?: unknown,"color_slot"?: number,"continent_id"?: string | null,"created_at"?: string,"id"?: string,"is_frontier"?: boolean,"label"?: string,"plot_count"?: number,"updated_at"?: string
                   }
                   Relationships: [
-                    
+                    {
+      foreignKeyName: "regions_continent_id_fkey"
+      columns: ["continent_id"]
+isOneToOne: false
+      referencedRelation: "continents"
+      referencedColumns: ["id"]
+    }
                   ]
                 },"reports": {
                   Row: {
-                    "created_at": string,"id": string,"reason": string,"reporter_id": string | null,"resolved_at": string | null,"resolved_by": string | null,"status": Database["public"]['Enums']["report_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"]
+                    "created_at": string,"id": string,"reason": string,"reporter_id": string | null,"reporter_trust_level": number,"resolved_at": string | null,"resolved_by": string | null,"status": Database["public"]['Enums']["report_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"],"weight": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"reason": string,"reporter_id"?: string | null,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["report_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"]
+                    "created_at"?: string,"id"?: string,"reason": string,"reporter_id"?: string | null,"reporter_trust_level"?: number,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["report_status"],"target_id": string,"target_type": Database["public"]['Enums']["report_target"],"weight"?: number
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"reason"?: string,"reporter_id"?: string | null,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["report_status"],"target_id"?: string,"target_type"?: Database["public"]['Enums']["report_target"]
+                    "created_at"?: string,"id"?: string,"reason"?: string,"reporter_id"?: string | null,"reporter_trust_level"?: number,"resolved_at"?: string | null,"resolved_by"?: string | null,"status"?: Database["public"]['Enums']["report_status"],"target_id"?: string,"target_type"?: Database["public"]['Enums']["report_target"],"weight"?: number
                   }
                   Relationships: [
                     {
@@ -373,10 +445,12 @@ isOneToOne: false
                 }
           }
           Functions: {
-            [_ in never]: never
+            "delete_comment":
+{ Args: { "target_comment_id": string }; Returns: boolean
+                           }
           }
           Enums: {
-            "moderation_status": "pending"|"approved"|"rejected"|"blurred","plot_item_type": "text"|"drawing"|"image"|"link"|"code"|"webpage"|"video"|"document","plot_status": "active"|"suspended","report_status": "open"|"actioned"|"dismissed","report_target": "plot"|"plot_item"|"comment"|"user","staff_role": "moderator"|"admin"
+            "ai_purpose": "region_label"|"continent_label"|"borderline_text"|"image_check","appeal_status": "open"|"upheld"|"overturned","moderation_status": "pending"|"approved"|"rejected"|"blurred","placement_kind": "unplaced"|"auto"|"owner_chosen","plot_item_type": "description"|"text"|"drawing"|"image"|"link"|"code"|"webpage"|"video"|"document","plot_status": "active"|"suspended","report_status": "open"|"actioned"|"dismissed","report_target": "plot"|"plot_item"|"comment"|"user","staff_role": "moderator"|"admin"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -496,7 +570,7 @@ export const Constants = {
           }
         },"public": {
           Enums: {
-            "moderation_status": ["pending", "approved", "rejected", "blurred"],"plot_item_type": ["text", "drawing", "image", "link", "code", "webpage", "video", "document"],"plot_status": ["active", "suspended"],"report_status": ["open", "actioned", "dismissed"],"report_target": ["plot", "plot_item", "comment", "user"],"staff_role": ["moderator", "admin"]
+            "ai_purpose": ["region_label", "continent_label", "borderline_text", "image_check"],"appeal_status": ["open", "upheld", "overturned"],"moderation_status": ["pending", "approved", "rejected", "blurred"],"placement_kind": ["unplaced", "auto", "owner_chosen"],"plot_item_type": ["description", "text", "drawing", "image", "link", "code", "webpage", "video", "document"],"plot_status": ["active", "suspended"],"report_status": ["open", "actioned", "dismissed"],"report_target": ["plot", "plot_item", "comment", "user"],"staff_role": ["moderator", "admin"]
           }
         }
 } as const

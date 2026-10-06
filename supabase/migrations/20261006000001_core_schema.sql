@@ -10,9 +10,15 @@ create extension if not exists vector with schema extensions;
 
 create type public.moderation_status as enum ('pending', 'approved', 'rejected', 'blurred');
 
+-- 'description' is the plot's one-line description (exactly one per plot,
+-- required at signup). It is moderated like any text and not drawn on the canvas.
 create type public.plot_item_type as enum (
-  'text', 'drawing', 'image', 'link', 'code', 'webpage', 'video', 'document'
+  'description', 'text', 'drawing', 'image', 'link', 'code', 'webpage', 'video', 'document'
 );
+
+-- How a plot got its place: automatically, chosen by its owner when it
+-- couldn't be placed automatically, or not yet placed.
+create type public.placement_kind as enum ('unplaced', 'auto', 'owner_chosen');
 
 -- 'suspended' hides a whole plot from the public (e.g. owner banned).
 create type public.plot_status as enum ('active', 'suspended');
@@ -22,6 +28,13 @@ create type public.report_target as enum ('plot', 'plot_item', 'comment', 'user'
 create type public.report_status as enum ('open', 'actioned', 'dismissed');
 
 create type public.staff_role as enum ('moderator', 'admin');
+
+create type public.appeal_status as enum ('open', 'upheld', 'overturned');
+
+-- What a Claude call was for; each counts against the daily spend cap.
+create type public.ai_purpose as enum (
+  'region_label', 'continent_label', 'borderline_text', 'image_check'
+);
 
 -- ---------------------------------------------------------------------------
 -- Shared trigger: keep updated_at current
@@ -65,17 +78,31 @@ create table public.staff (
 );
 
 -- ---------------------------------------------------------------------------
--- regions: topic "continents" on the map
+-- continents and regions: the map's topic hierarchy
+--
+-- Labels are named once by Claude and cached forever. `color_slot` is one of
+-- the 8 region hues in docs/design.md, assigned so neighbors stay
+-- distinguishable; it never changes for a region.
 -- ---------------------------------------------------------------------------
+
+create table public.continents (
+  id uuid primary key default gen_random_uuid(),
+  label text not null
+    constraint continents_label_length check (char_length(label) between 1 and 60),
+  created_at timestamptz not null default now()
+);
 
 create table public.regions (
   id uuid primary key default gen_random_uuid(),
+  continent_id uuid references public.continents (id) on delete set null,
   label text not null
     constraint regions_label_length check (char_length(label) between 1 and 60),
-  -- The frontier holds plots that do not yet fit any region (brief 5.1 step 5).
+  color_slot smallint not null default 1
+    constraint regions_color_slot_range check (color_slot between 1 and 8),
+  -- The frontier holds plots that do not yet fit any region.
   is_frontier boolean not null default false,
-  -- Voyage voyage-4 family, 1024 dims. Null only for the frontier.
-  centroid_embedding extensions.vector(1024),
+  -- Voyage voyage-4-lite, 512 dims, half precision (about 1 KB). Null only for the frontier.
+  centroid_embedding extensions.halfvec(512),
   center_x integer not null,
   center_y integer not null,
   plot_count integer not null default 0
@@ -87,68 +114,26 @@ create table public.regions (
 
 -- At most one frontier region.
 create unique index regions_single_frontier on public.regions (is_frontier) where is_frontier;
+create index regions_continent_idx on public.regions (continent_id);
 
 create trigger regions_set_updated_at
   before update on public.regions
   for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
--- plots: one per user
--- ---------------------------------------------------------------------------
-
-create table public.plots (
-  id uuid primary key default gen_random_uuid(),
-  -- unique: one plot per user (product rule)
-  owner_id uuid not null unique references public.users (id) on delete cascade,
-  region_id uuid references public.regions (id) on delete set null,
-  -- World grid anchor cell. Null until placed.
-  grid_x integer,
-  grid_y integer,
-  -- Footprint size; exact units (cells per side) are settled in Phase 4.
-  base_size integer not null default 1
-    constraint plots_base_size_positive check (base_size > 0),
-  -- Earned space as of earned_space_updated_at. It decays exponentially and
-  -- is computed on read; no job rewrites it (docs/architecture.md, "Growth").
-  -- Any write first brings it up to date, then adds the new points.
-  earned_space double precision not null default 0
-    constraint plots_earned_space_nonnegative check (earned_space >= 0),
-  earned_space_updated_at timestamptz not null default now(),
-  last_active_at timestamptz not null default now(),
-  -- Derived ONLY from approved content by the server.
-  summary text,
-  -- Hash of the approved content `summary` was built from. If the content
-  -- hash hasn't changed, no AI call is made (docs/architecture.md, "AI").
-  summary_source_hash text,
-  embedding extensions.vector(1024),
-  -- Which embedding model produced `embedding`, so a model change can be detected.
-  embedding_model text,
-  thumbnail_url text,
-  status public.plot_status not null default 'active',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint plots_grid_both_or_neither check ((grid_x is null) = (grid_y is null)),
-  constraint plots_grid_cell_unique unique (grid_x, grid_y)
-);
-
-create index plots_region_id_idx on public.plots (region_id);
-
-create trigger plots_set_updated_at
-  before update on public.plots
-  for each row execute function public.set_updated_at();
-
--- ---------------------------------------------------------------------------
 -- assets: content-addressed media (docs/architecture.md, "Uploads")
 --
--- Every image is re-encoded server-side (WebP, resized, metadata stripped)
--- and stored once under the SHA-256 of the result, then moderated once. The
--- same meme uploaded a thousand times is one row, one object, one scan.
+-- The browser resizes and re-encodes every image (WebP, JPEG as last resort,
+-- metadata stripped). The server verifies the bytes' SHA-256, stores the file
+-- once under that hash and moderates it once. The same meme uploaded a
+-- thousand times is one row, one object, one scan.
 -- ---------------------------------------------------------------------------
 
 create table public.assets (
   sha256 text primary key
     constraint assets_sha256_format check (sha256 ~ '^[0-9a-f]{64}$'),
   mime_type text not null
-    constraint assets_mime_type check (mime_type in ('image/webp', 'image/avif')),
+    constraint assets_mime_type check (mime_type in ('image/webp', 'image/jpeg')),
   byte_size integer not null
     constraint assets_byte_size_positive check (byte_size > 0),
   width integer not null
@@ -158,11 +143,17 @@ create table public.assets (
   moderation_status public.moderation_status not null default 'pending',
   moderation_reason text,
   moderated_at timestamptz,
+  -- Set once this exact file has passed the Claude image check (CLAUDE.md
+  -- 7.4). A hash that passed is never sent to Claude again.
+  claude_checked_at timestamptz,
+  -- Short description from the Claude check: placement text and fallback alt text.
+  ai_description text
+    constraint assets_ai_description_length check (char_length(ai_description) <= 500),
   created_at timestamptz not null default now()
 );
 
--- Maps the hash of an original upload to the asset it produced, so a
--- byte-identical re-upload skips re-encoding and moderation entirely.
+-- Maps the hash of an original file (computed in the browser) to the asset it
+-- produced, so a byte-identical re-upload skips uploading and moderation.
 create table public.asset_sources (
   source_sha256 text primary key
     constraint asset_sources_sha256_format check (source_sha256 ~ '^[0-9a-f]{64}$'),
@@ -181,6 +172,62 @@ create table public.asset_uploads (
 );
 
 create index asset_uploads_user_idx on public.asset_uploads (user_id);
+
+-- ---------------------------------------------------------------------------
+-- plots: one per user
+-- ---------------------------------------------------------------------------
+
+create table public.plots (
+  id uuid primary key default gen_random_uuid(),
+  -- unique: one plot per user (product rule)
+  owner_id uuid not null unique references public.users (id) on delete cascade,
+  region_id uuid references public.regions (id) on delete set null,
+  placement public.placement_kind not null default 'unplaced',
+  -- World grid anchor cell. Null until placed.
+  grid_x integer,
+  grid_y integer,
+  -- Footprint size; exact units (cells per side) are settled in Phase 4.
+  base_size integer not null default 1
+    constraint plots_base_size_positive check (base_size > 0),
+  -- Earned space as of earned_space_updated_at. It decays exponentially and
+  -- is computed on read; no job rewrites it (docs/architecture.md, "Growth").
+  -- Any write first brings it up to date, then adds the new points.
+  earned_space double precision not null default 0
+    constraint plots_earned_space_nonnegative check (earned_space >= 0),
+  earned_space_updated_at timestamptz not null default now(),
+  last_active_at timestamptz not null default now(),
+  -- Updated at most once per plot per day; drives cold storage.
+  last_visited_at timestamptz not null default now(),
+  -- Hash of the normalized approved text last embedded. Unchanged hash, no
+  -- Voyage call (CLAUDE.md 7.9).
+  text_hash text,
+  embedding extensions.halfvec(512),
+  -- Which embedding model produced `embedding`, so a model change can be detected.
+  embedding_model text,
+  -- Current approved thumbnail (content-addressed) and its tiny blur placeholder.
+  thumbnail_asset_sha256 text references public.assets (sha256) on delete set null,
+  thumb_hash text
+    constraint plots_thumb_hash_length check (char_length(thumb_hash) <= 64),
+  -- Version of the published snapshot JSON in R2 that visitors read.
+  snapshot_version integer not null default 0,
+  -- Set while the plot's content lives in R2 cold storage (CLAUDE.md 7.11).
+  cold_storage_key text,
+  -- Views from everyone, including signed-out visitors. Display only; never growth.
+  display_view_count bigint not null default 0
+    constraint plots_display_views_nonnegative check (display_view_count >= 0),
+  status public.plot_status not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint plots_grid_both_or_neither check ((grid_x is null) = (grid_y is null)),
+  constraint plots_grid_cell_unique unique (grid_x, grid_y)
+);
+
+create index plots_region_id_idx on public.plots (region_id);
+create index plots_last_visited_idx on public.plots (last_visited_at) where cold_storage_key is null;
+
+create trigger plots_set_updated_at
+  before update on public.plots
+  for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- plot_items: the things on a plot
@@ -205,8 +252,17 @@ create table public.plot_items (
   moderated_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint plot_items_image_has_asset check (type <> 'image' or asset_sha256 is not null)
+  constraint plot_items_image_has_asset check (type <> 'image' or asset_sha256 is not null),
+  constraint plot_items_description_text check (
+    type <> 'description'
+    or char_length(coalesce(content ->> 'text', '')) between 1 and 120
+  )
 );
+
+-- Exactly one description per plot (the "at least one" half is enforced by
+-- signup creating it and clients not being allowed to delete it).
+create unique index plot_items_one_description on public.plot_items (plot_id)
+  where type = 'description';
 
 create index plot_items_plot_id_idx on public.plot_items (plot_id);
 create index plot_items_asset_idx on public.plot_items (asset_sha256) where asset_sha256 is not null;
@@ -230,8 +286,12 @@ create table public.comments (
   moderation_status public.moderation_status not null default 'pending',
   moderation_reason text,
   moderated_at timestamptz,
+  -- Soft delete: hidden from everyone but staff (CLAUDE.md section 3).
+  deleted_at timestamptz,
+  deleted_by uuid references public.users (id) on delete set null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint comments_deleted_pair check ((deleted_at is null) = (deleted_by is null))
 );
 
 create index comments_plot_id_idx on public.comments (plot_id, created_at);
@@ -329,6 +389,12 @@ create table public.reports (
   -- Polymorphic, so no FK; resolved by target_type.
   target_id uuid not null,
   reporter_id uuid references public.users (id) on delete set null,
+  -- Snapshot of the reporter's trust when reporting, and the weight it gives
+  -- (docs/decisions.md ADR-015). Filled by the database, not the client.
+  reporter_trust_level smallint not null default 0
+    constraint reports_trust_range check (reporter_trust_level between 0 and 2),
+  weight real not null default 0.25
+    constraint reports_weight_range check (weight > 0 and weight <= 1),
   reason text not null
     constraint reports_reason_length check (char_length(reason) between 1 and 1000),
   status public.report_status not null default 'open',
@@ -341,3 +407,44 @@ create table public.reports (
 
 create index reports_open_idx on public.reports (created_at) where status = 'open';
 create index reports_target_idx on public.reports (target_type, target_id);
+
+-- ---------------------------------------------------------------------------
+-- appeals: a person asks for a human to look again at a moderation decision
+-- ---------------------------------------------------------------------------
+
+create table public.appeals (
+  id uuid primary key default gen_random_uuid(),
+  target_type public.report_target not null,
+  target_id uuid not null,
+  user_id uuid not null references public.users (id) on delete cascade,
+  message text not null
+    constraint appeals_message_length check (char_length(message) between 1 and 1000),
+  status public.appeal_status not null default 'open',
+  resolved_by uuid references public.users (id) on delete set null,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- One open appeal per person per target. After a decision, a later rejection
+-- of the same (edited) item can be appealed again.
+create unique index appeals_one_open_per_target on public.appeals (user_id, target_type, target_id)
+  where status = 'open';
+create index appeals_open_idx on public.appeals (created_at) where status = 'open';
+
+-- ---------------------------------------------------------------------------
+-- ai_spend_daily: every Claude call is counted here; the daily cap reads it
+-- ---------------------------------------------------------------------------
+
+create table public.ai_spend_daily (
+  day date not null,
+  purpose public.ai_purpose not null,
+  requests integer not null default 0
+    constraint ai_spend_requests_nonnegative check (requests >= 0),
+  input_tokens bigint not null default 0
+    constraint ai_spend_input_nonnegative check (input_tokens >= 0),
+  output_tokens bigint not null default 0
+    constraint ai_spend_output_nonnegative check (output_tokens >= 0),
+  estimated_cost_usd numeric(12, 6) not null default 0
+    constraint ai_spend_cost_nonnegative check (estimated_cost_usd >= 0),
+  primary key (day, purpose)
+);

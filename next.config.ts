@@ -1,7 +1,12 @@
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Every image is resized and encoded in the browser before upload, so
+  // server-side optimization (metered Cloudflare Images) is never needed.
+  images: { unoptimized: true },
   async headers() {
     return [
       {
@@ -20,4 +25,7 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default createNextIntlPlugin()(nextConfig);
+
+// Lets `next dev` use Cloudflare bindings locally.
+initOpenNextCloudflareForDev();

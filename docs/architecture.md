@@ -1,208 +1,238 @@
 # Architecture: cheap to look at, pay only for change
 
 Pangaea treats the world like a map service, not a live app. Most visitors only look, so looking
-should cost almost nothing: static files from a CDN, no database. The expensive work (rendering,
-moderation, AI) runs only when something actually changes, and only for what changed.
+costs almost nothing: static files from a CDN and no database. Expensive work (moderation, AI,
+layout builds) runs only when something changes, and only for what changed. `CLAUDE.md` is the
+source of truth; this document explains how the pieces fit. The reasons behind each choice are in
+`docs/decisions.md`.
 
-This document is the plan. Brief sections it refines are noted inline. Items marked **(Phase N)**
-are built in that phase; nothing here changes the phase order.
+## System map
+
+```
+Browser ──static JS/CSS (free, unlimited)──► Cloudflare Workers static assets
+   │
+   ├── layout JSON, thumbnails, snapshots, media ──► Cloudflare CDN ──► R2 (public bucket)
+   │
+   ├── app pages + small JSON APIs ─────────────► Worker (Next.js via OpenNext)
+   │                                                  │
+   │                                                  ├─► Supabase Postgres + Auth
+   │                                                  ├─► OpenAI Moderation (free)
+   │                                                  ├─► Claude Haiku (image checks, borderline, labels)
+   │                                                  └─► Voyage (embeddings)
+   │
+   └── uploads (presigned PUT) ─────────────────► R2 (private bucket)
+
+Cron Triggers ─► same Worker, scheduled handler ─► small batches: moderation queue, Claude
+                  batches, embeddings, layout and snapshot builds, link rechecks, cold storage,
+                  nightly encrypted backup
+```
 
 ## The read path: what a visitor costs
 
-| Zoom                | What loads                                                                                  | Source   | DB queries |
-| ------------------- | ------------------------------------------------------------------------------------------- | -------- | ---------- |
-| World / continents  | Pre-baked map tiles + a small regions file for labels                                       | CDN      | 0          |
-| Neighbourhood       | Higher-zoom tiles, which are composited plot thumbnails                                     | CDN      | 0          |
-| On a plot           | The plot's published snapshot (approved items as JSON), then media for items on screen only | CDN      | 0          |
-| Comments, reactions | Paginated query                                                                             | Postgres | 1 per page |
+| Zoom                  | What loads                                                                                                           | Source   | Database queries |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- | -------- | ---------------- |
+| World / continents    | `regions` file (vector shapes, colors, labels) and coarse layout chunks                                              | CDN      | 0                |
+| Region / neighborhood | Layout chunks in the viewport (plot blocks with ThumbHash), then thumbnails of visible plots                         | CDN      | 0                |
+| On a plot             | The plot's published snapshot (approved items as JSON), then media for items on screen, plus HTML overlays for cards | CDN      | 0                |
+| Comments              | Paginated query                                                                                                      | Postgres | 1 per page       |
 
-So panning the whole world, and even opening a plot, never touches the database. The database
-serves writes, owners editing their own plot, comments, and the jobs that bake what everyone else
-sees.
+The viewer never loads the editor. Excalidraw is a separate lazy chunk, fetched only when an owner
+edits their own plot.
 
-## Map tiles (Phase 2)
+## World viewer (Phase 2)
 
-- **Pyramid.** The world grid is cut into 512 px tiles at zoom levels `0..Z`. The deepest level is
-  plot thumbnails composited onto the grid. Each level above is built by downsampling its four
-  children, so baking never re-renders plot content.
-- **Re-render only what changed.** When a plot's thumbnail changes, the tiles it covers are marked
-  dirty: about one tile per zoom level, plus a neighbour or two when the plot sits on a tile edge.
-  Dirty tiles go into a job queue keyed by tile, so many edits collapse into one rebake.
-- **Immutable tile URLs.** A tile's key includes the hash of its image (`t/<z>/<x>/<y>/<hash>.webp`)
-  and is cached forever. What changes is a small **manifest** per block of tiles (for example 32×32)
-  that lists which tiles exist and their current hashes, cached for about 60 s.
-- **Empty space is free.** An empty tile is simply absent from the manifest, so the client draws
-  the background colour and makes **no request at all**. That beats a shared blank tile, which would
-  still be a request.
-- **Labels are drawn by the client** from a small regions file (`regions.json`, about one line per
-  region). Text stays sharp at every zoom and a region rename doesn't rebake any tiles.
+- **Engine:** PixiJS (WebGL), view only. One camera with momentum pan, pinch zoom and eased
+  fly-to. Respects reduced motion: fly-to becomes a quick cross-fade.
+- **Layout data.** The world is cut into square chunks of, for example, 64 × 64 grid cells. Each
+  chunk file lists its plots as compact arrays: id, x, y, size, region and ThumbHash (about 40
+  bytes per plot before gzip).
+  - `regions-v<N>.json` holds the simplified region outlines, colors, labels and continent groups.
+  - Both are rebuilt by cron in small batches when placement or sizes change, written with
+    versioned names, and pointed to by a tiny `world.json` cached for about 60 seconds.
+- **Level of detail.**
+  - Zoomed out: region fills and outlines with labels, and plot blocks drawn as instanced quads in
+    region colors. Blocks fade in only once they are a few pixels wide.
+  - Mid zoom: thumbnails for plots in the viewport. ThumbHash shows instantly as a blurred
+    placeholder.
+  - Textures go through a least-recently-used cache with a memory budget; off-screen textures are
+    unloaded.
+  - Close zoom: the snapshot, with media loaded only for on-screen items.
+- **Card overlays.** When zoomed in on a plot, code and link cards get a real HTML layer positioned
+  over the canvas, so code can be selected and copied and links clicked. Overlays exist only for
+  cards on screen and above a zoom threshold.
+- **Accessibility.**
+  - The canvas has a parallel accessible structure: region list view, plot list, and focusable
+    plot links in reading order.
+  - The command palette and keyboard shortcuts give full non-pointer navigation.
 
-### Takedowns must beat the cache
+## Editor (Phase 1)
 
-Pre-baked images keep showing content after it is removed, unless takedown is designed in:
+- **Excalidraw (MIT), lazy-loaded.** Our item types are layered on standard elements:
+  - **Code card:** an `image` element whose bitmap our code renders (syntax-highlighted, theme-aware).
+    `customData = { kind: "code", language, source }`. Double-click opens our dialog; saving the
+    dialog re-renders the bitmap.
+  - **Link card:** the same pattern, with `customData = { kind: "link", url, title, description,
+imageAsset }`. Preview data is fetched by our server and moderated.
+  - **Webpage (Phase 6):** an `embeddable` element. `renderEmbeddable` shows the screenshot and a
+    "tap to run" button.
+- **Mapping to the database.** Each Excalidraw element maps to one `plot_items` row:
+  - free-draw strokes and shapes are `drawing`
+  - text elements are `text`
+  - images are `image`
+  - cards are `code` or `link`
 
-1. Rejecting or blurring an item triggers a **priority** re-render of the plot thumbnail and its
-   tiles. The manifest TTL (about 60 s) bounds how long the old version is reachable through the
-   map.
-2. For serious content, the old thumbnail and tile objects are **deleted** from storage and **purged
-   from the CDN** by URL, because anyone who saved the old URL could still load it.
-3. Media is content-addressed (below), so taking down one asset hides it on every plot that uses it.
+  Element version numbers make debounced saves send only changed elements (an upsert by element id,
+  plus deletions).
 
-### Rendering thumbnails without a browser (Phase 2)
+- **Paste and drop.** One detector maps clipboard or drop contents to an item:
+  - an image file becomes an image
+  - a URL becomes a link card
+  - text that looks like code becomes a code card (language detected in the browser with a small
+    heuristic and `highlight.js` auto-detect)
+  - anything else becomes text
 
-The brief asks for server-side PNG thumbnails. Running headless Chromium per save would be the
-priciest part of the system. Recommended instead: render a plot's **approved** items to SVG with
-our own small renderer (text, strokes, image references, link and code cards), then rasterize to
-WebP with `resvg` and `sharp`. It's a few tens of milliseconds of CPU with no browser. At thumbnail
-size, small differences from tldraw's own look don't matter.
+  The same path serves the PWA share target.
 
-## Plot snapshots (Phase 1 to 2)
-
-When a plot's approved content changes, the server writes a JSON snapshot of its public items to
-`p/<plot id>/<version>.json` in the public bucket. Visitors read that snapshot from the CDN, and
-`plots` points at the current version. Snapshots are built only from approved data, the same rule
-as `plot_items_public`, which is still the source of truth and covers the owner's own view.
-
-"Load only what's on screen" applies to **media**: a plot's item list is small (one person's
-board), so it loads in one go, but images load lazily as they enter the viewport and at the
-resolution needed.
+- **Offline queue.** Saves go to IndexedDB first, then flush with retry and backoff. With two tabs
+  open, the last write to each element wins.
+- **Tidy up.** A deterministic shelf-packing layout in the browser: group by type, sort by
+  creation time, keep relative order. No server, no AI.
+- **Thumbnail.** On save (debounced, and only when the scene changed), `exportToBlob` renders a
+  512 px WebP. The upload carries the element ids and versions it was rendered from (see
+  "Moderation").
 
 ## Uploads (Phase 1)
 
-1. The client asks the server for a presigned `PUT` URL for one key under `raw/<user id>/` in the
-   private bucket, signed with a size cap. It uploads straight to storage, not through our servers.
-2. On finalize, the server hashes the original bytes. If that hash is already in `asset_sources`,
-   the existing asset is linked to the user and we're done: **no re-encode, no re-scan**.
-3. Otherwise `sharp` decodes the image with a pixel limit (against decompression bombs), fixes
-   orientation, keeps only the **first frame** (so moderation sees exactly what will be shown),
-   resizes so the longest side is at most 2048 px, **strips metadata** (removing GPS location from
-   phone photos) and encodes **WebP**.
-4. The output is hashed. That hash is the asset's identity and storage key
-   (`pending/<sha256>.webp`). Identical output from different originals also deduplicates.
-5. The asset is moderated once. If approved, it is copied to `a/<sha256>.webp` in the public bucket.
-   If rejected, the pending copy is deleted. The raw upload is always deleted.
+1. The browser hashes the original file (SHA-256, Web Crypto) and asks the server whether that
+   source hash is known. If it is, the existing asset is linked and nothing is uploaded.
+2. Otherwise the browser draws the image to a canvas, keeping only the first frame of a GIF. That
+   strips the metadata, including GPS location. It then resizes so the longest side is at most
+   1,024 px and encodes WebP at quality 0.8 (JPEG if the browser can't encode WebP).
+3. The browser asks for a presigned PUT URL. It is for a single-use key unique to this upload
+   (`incoming/<user id>/<upload id>`), with the size cap and content type signed in. Keys are never
+   shared, so nobody can overwrite another person's file, even one with the same content.
+4. On finalize, the server streams the object and verifies its SHA-256 (Web Crypto is native, so
+   this is cheap). It checks the image header for type and dimensions, then copies the bytes to
+   their content-addressed key `pending/<sha256>` with a server-side copy that clients can't
+   write to. It records the asset and queues moderation.
+   - Claude checks these exact stored bytes; there is no separate copy that could differ from what
+     gets published.
+   - If the hash is already known, the incoming object is simply deleted.
+5. When approved, the object is copied to the public bucket under `a/<sha256>.webp`. Rejected
+   objects are deleted.
 
-**WebP rather than AVIF for stored media.** AVIF is smaller, but encoding it takes much longer, and
-on serverless CPU that's a real cost per upload. WebP decodes everywhere and encodes fast. AVIF can
-be added later for tiles, which are encoded once and downloaded many times, if bandwidth data
-justifies it.
+## Moderation
 
-**Exact hashes don't replace perceptual hashing.** SHA-256 deduplicates byte-identical files. A meme
-re-saved by another app is different bytes. Matching known abuse material needs perceptual hashing
-(PhotoDNA or similar). That remains the separate, clearly marked hook in `ModerationService` that
-the brief asks for.
+Every check is recorded per asset or item, so no hash is ever re-checked for the same purpose.
 
-## Drawings (Phase 1)
+```
+text (items, comments, descriptions, card source)
+  └─► OpenAI Moderation ─ clear ─► approve / reject
+                        └ borderline ─► Claude (cap) ─ unsure ─► human queue
 
-- Strokes are simplified (Ramer–Douglas–Peucker at about half a pixel), coordinates are quantized,
-  and points are delta-encoded before saving.
-- They are stored as compact JSON in `plot_items.content`. Postgres already compresses large values
-  (TOAST), so we don't add our own compression on top; base64-encoding compressed bytes would make
-  them about a third larger and opaque to the database.
-- **Drawings are images to moderation.** Anyone can draw anything, so every drawing is rasterized
-  with the thumbnail renderer and sent through image moderation, not just text checks.
+image / thumbnail
+  └─► known approved hash? ─► reuse verdict
+  └─► abuse-hash match (PhotoDNA, before launch) ─► block + legal reporting procedure
+  └─► OpenAI Moderation (sexual, violence, self-harm)
+  └─► Claude check if: uploader is trust 0 (normal API) │ plot starts earning growth (batch) │ reported (batch)
+         ├─ also returns a short description ─► assets.ai_description
+         └─ cap reached ─► stays pending (never skipped)
+```
 
-## Moderation cost tiers (Phase 1)
+- **Thumbnails** are published only if they pass image checks and every element id and version they
+  were rendered from is approved. Otherwise the previous approved thumbnail stays.
+- **Cards:** their source text is moderated. Their bitmap is shown only to the owner in the editor.
+  The public sees cards drawn from the moderated source.
+- **Trust promotion** (proposed, tunable): level 0 → 1 after 7 days, 5 approved items and no
+  rejections in 30 days. Level 1 → 2 after 60 days, 30 approved items, received reports below a
+  threshold, and a staff review flag. Faster promotion is the main lever on Claude cost.
+- **Reports:** weight = 1.0 for level 2 (blurs immediately), 0.5 for level 1 and 0.25 for level 0.
+  The item blurs when the summed weight reaches 1.0. Every report also queues an immediate re-check
+  (OpenAI, and Claude for images); a flag blurs the content right away.
+- **Abuse-material matching:** PhotoDNA Cloud Service before publishing, and Cloudflare's CSAM
+  Scanning Tool on cached content as a second layer. Matches follow the written legal procedure
+  (`CLAUDE.md` section 12).
 
-Every item still starts `pending` and nothing goes public without a verdict (brief 5.4, no
-exceptions). The tiers only change how much a verdict costs:
+## Placement (Phase 3)
 
-| Tier | Runs on                         | What                                                                               |
-| ---- | ------------------------------- | ---------------------------------------------------------------------------------- |
-| 0    | everything, free                | Cached verdict for a known asset hash, URL blocklists, length and rate limits      |
-| 1    | everything, cheap               | Text and image classifiers. Clearly safe gets approved, clearly bad gets rejected. |
-| 2    | borderline only                 | Claude with vision and the written policy. Gets the context a classifier lacks.    |
-| 3    | Tier 2 unsure, reports, appeals | Human review on the admin page                                                     |
+- **Text for embedding:** the description first, then text items, card source and image
+  descriptions. Normalized, trimmed to about 2,000 tokens and hashed. If the hash is unchanged,
+  nothing happens.
+- **Voyage `voyage-4-lite`** at 512 dimensions, stored as `halfvec(512)`, about 1 KB per plot.
+  Up to many plots are sent per request.
+- **Nearest region** by cosine similarity. Above the threshold the plot is placed by spiral search
+  from the region center; below it, the plot goes to the frontier.
+- **New regions:** a frontier cluster grows into a new region, which Claude names once (Batch API)
+  and which is assigned the next unused color. Continents group regions the same way.
+- **Owner choice:** if a plot can't be placed, the owner picks a region from a list. Automatic
+  placement then leaves it alone.
 
-The cheap tier may only auto-approve when every score is well clear of the line. Anything else moves
-up a tier rather than defaulting to approve.
-
-## AI spend (Phase 3)
-
-- **Change gate.** A summary is regenerated only if a hash of the plot's approved content
-  (normalized text plus asset hashes) differs from `plots.summary_source_hash`. Moving items around
-  never triggers AI.
-- **Debounce.** Summary jobs wait until the plot has been quiet for about 10 minutes. Each edit
-  pushes the job back instead of adding another.
-- **Model.** `claude-haiku-4-5` by default (`ANTHROPIC_MODEL`), for summaries and region labels.
-- **Batch API for non-urgent work.** Re-summaries go through Message Batches at half price. Batches
-  usually finish within an hour; the guarantee is 24 hours. A brand-new plot's **first** summary
-  runs in real time so new users get placed quickly; until then the plot waits in the frontier.
-- **Re-embed only if the summary text changed. Re-place only if** the new embedding has moved away
-  from the old one past the threshold (brief 5.1.6).
-- Rough cost per summary (about 2,000 tokens in, 150 out): about $0.003 in real time on Haiku,
-  about $0.0014 batched. Note that Sonnet 5.5 is only twice Haiku's price, so Sonnet batched costs
-  the same as Haiku in real time. **The change gate and the debounce save far more than the model
-  choice does.**
-
-## Growth without a growth job (Phase 4)
-
-Refines brief 5.2 ("Recalculate in a scheduled job"). Earned space is stored as a value plus the
-time it was last brought up to date (`earned_space`, `earned_space_updated_at`) and computed on read:
+## Growth (Phase 4)
 
 ```
 decaying_time = max(0, now − max(earned_space_updated_at, last_active_at + grace))
 earned(now)   = earned_space × 2^(−decaying_time / half_life)
 ```
 
-- **Adding points** (missions, attention, approved comments) works in one `UPDATE`: set the value to
-  `earned(now) + points` and the timestamp to `now`.
-- **Owner activity pauses decay** for a grace period. The formula is only exact if earned space is
-  brought up to date _before_ `last_active_at` moves, so the activity trigger
-  (`private.bump_plot_activity`) must do that once grace exists. This is noted in the trigger.
-- **Size changes in steps.** A plot's footprint on the grid changes only at size thresholds, never
-  continuously. Otherwise every plot would need a rebake every moment. The moment earned space
-  will fall below its current step can be computed ahead of time and stored, and an indexed query
-  for "steps that change now" finds the few plots that need a rebake. That touches only the plots
-  that changed, never the whole map.
+- Adding points is a single `UPDATE` that brings `earned_space` up to date and adds the points.
+  Owner activity brings it up to date first, then moves `last_active_at`.
+- **Gate:** before the first growth applies, every image on the plot must have passed the Claude
+  check. Until then, credits accumulate as held credits.
+- **Footprints change in steps.** When the next step crossing will happen can be computed, so an
+  indexed query finds the plots to update and the layout chunks to rebuild.
+- **Attention:** batched beacons every 30 seconds, folded into `attention_daily` with an exact
+  per-visitor daily cap. Signed-out visitors only increment the display count.
 
-## Attention (Phase 4)
+## Background work (Cron Triggers)
 
-- The browser counts views and visible, focused dwell time per plot and sends them **every
-  30 seconds** and when the page is hidden (`sendBeacon`). That's one small request per active
-  viewer per 30 seconds, however much they click.
-- Client numbers are hints. The server only counts signed-in visitors (open question 5), ignores
-  owners visiting their own plot, and caps dwell at the real time elapsed since that visitor's
-  last flush.
-- Instead of storing raw events, each flush is folded into one `attention_daily` row per plot,
-  visitor and day. `credited_score` makes the per-visitor daily cap exact: each flush credits
-  `min(cap, score) − credited_score` to the plot's earned space.
-- Very popular plots could see contention on their row. If that happens, credits get buffered and
-  applied per plot in batches.
+One scheduled handler on the app's Worker dispatches small, time-boxed jobs. Each job claims a few
+rows from Postgres with `FOR UPDATE SKIP LOCKED` and stops early when its batch is done.
 
-## Editing: no real-time servers (Phase 1)
+| Job                    | Interval | Work per run                                           |
+| ---------------------- | -------- | ------------------------------------------------------ |
+| Moderation queue       | 1 min    | OpenAI checks, Claude normal-API checks within the cap |
+| Claude batches         | 5 min    | Submit and collect Message Batches                     |
+| Embeddings & placement | 5 min    | Hash-gated, debounced Voyage batch                     |
+| Layout & snapshots     | 1 min    | Rebuild only dirty chunks and plots (takedowns first)  |
+| Link rechecks          | hourly   | A few dozen links                                      |
+| Cold storage           | hourly   | A few dozen idle plots                                 |
+| Nightly backup         | daily    | Encrypted dump to R2 (Workers Paid)                    |
 
-Only the owner edits a plot, so there is no live sync service. The editor saves about 1 to 2 seconds
-after the last change, sending only changed items (an upsert by tldraw's stable shape id, which the
-schema allows) and deletions, plus a final save when the page is hidden. With two tabs open, the
-last write to each item wins.
+The free plan allows 5 cron triggers per account, so jobs share a few schedules and the handler
+dispatches by schedule string.
 
-## Hosting
+## Hosting and costs
 
-- **Supabase:** Postgres and Auth. Only writes, owners and comments reach it.
-- **Cloudflare R2 + Cloudflare CDN:** all media, thumbnails, tiles, snapshots and manifests. R2
-  doesn't charge for data going out. You pay for storage and per operation, and with the CDN in
-  front, a read only reaches R2 when the CDN doesn't already have it. Content-addressed keys get
-  `Cache-Control: public, max-age=31536000, immutable`, and manifests and `regions.json` get a short
-  TTL.
-- **Vendor-neutral by design:** the app only speaks the S3 API (`S3_*` env vars). Locally, Supabase
-  Storage's S3 endpoint stands in for R2 (`npm run env:local` configures it).
-- **Background worker** for thumbnails, tiles, snapshots, moderation escalation and AI batches:
-  a Postgres job table (one row per piece of work, so repeat edits collapse; `run_after` for
-  debouncing; `SKIP LOCKED` so several workers can share it) drained by a small worker. Where the
-  worker runs is an open question.
+- **Cloudflare Workers via OpenNext.**
+  - Static assets are free and unlimited. App requests are 100k/day on Free; Workers Paid costs $5
+    and includes 10M requests.
+  - CPU per request is 10 ms on Free and up to 30 s on Paid.
+  - Measure CPU per route with Workers Observability before launch.
+- **R2 + CDN:** no egress fees. Content-addressed objects are cached forever; `world.json` for
+  about 60 seconds.
+- **Supabase free:** 500 MB database, 50k active users. Cold storage keeps the database small.
+- **Backups:**
+  - A nightly Cron Trigger streams `COPY … TO STDOUT` per table over a direct Postgres connection
+    (`pg` on Workers TCP sockets), gzipped with `CompressionStream`.
+  - The data is encrypted with a fresh AES-256-GCM key, wrapped with an RSA-OAEP public key (Web
+    Crypto), and uploaded to a private R2 bucket with multipart upload.
+  - The private key stays offline with the owner. Nothing about the data, keys or connection
+    strings is ever logged.
+  - Retention uses R2 lifecycle rules.
+  - It needs Workers Paid CPU time (planned for launch). GitHub Actions is not used, because GitHub's
+    terms limit hosted runners to building, testing, deploying and publishing the project.
 
-## Cold storage: deferred
+## Future: tile pyramid (triggered by measurement)
 
-Moving plots nobody has visited in months to cheaper storage doesn't pay yet. A plot's database rows
-are kilobytes, and its media already sits in R2, which is the cheap storage. The bills that grow
-are bandwidth and compute, which the rest of this document addresses. R2's Infrequent Access tier
-also charges per retrieval and has a minimum storage period, so a sleepy plot that gets visited
-again costs more, not less. The content-addressed media and snapshots keep the option open:
-revisit it when storage shows up as a real line on the bill.
+Kept for when `CLAUDE.md` section 14's trigger fires:
 
-## Live webpages (Phase 6)
-
-Shown as a static screenshot, which is an asset like any other and goes through image moderation,
-with a "tap to run" button. The page itself runs only on tap, in the sandboxed iframe on a separate
-origin (brief 5.5).
+- **Pyramid:** 512 px WebP tiles. The deepest level composites plot thumbnails; each level above is
+  downsampled from its four children.
+- **Incremental rebakes:** a changed plot marks only its tiles dirty, and repeat edits collapse into
+  one job.
+- **Empty areas** share one blank tile.
+- **Hash-versioned tile URLs,** with a small manifest per block of tiles.
+- **Takedowns** re-render with priority; serious cases are deleted and purged from the CDN.
+- **Compositing must run somewhere allowed and cheap:** a Worker on Workers Paid with a WebAssembly
+  image library, or a small container if volume demands it. Not GitHub Actions (terms), and not
+  other users' browsers (untrusted).

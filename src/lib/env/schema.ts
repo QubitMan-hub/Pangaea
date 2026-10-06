@@ -19,37 +19,60 @@ export const publicEnvSchema = z.object({
 export type PublicEnv = z.infer<typeof publicEnvSchema>;
 
 /** Treats empty strings (as left by `KEY=` lines in .env files) as unset. */
-const optionalSecret = z.preprocess(
-  (value) => (value === "" ? undefined : value),
-  z.string().min(1).optional(),
-);
+const blankAsUnset = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((value) => (value === "" ? undefined : value), schema);
+
+const optionalSecret = blankAsUnset(z.string().min(1).optional());
+
+const positiveInt = (fallback: number) =>
+  blankAsUnset(z.coerce.number().int().positive().default(fallback));
 
 export const serverEnvSchema = publicEnvSchema.extend({
   // Bypasses RLS. Server only; used for moderation, placement and jobs.
   SUPABASE_SECRET_KEY: z.string().min(1),
 
-  // AI services are optional until the phase that needs them; each service
-  // module asserts its own key when called.
+  // AI and moderation services are optional until the phase that needs them;
+  // each service module asserts its own key when called.
   ANTHROPIC_API_KEY: optionalSecret,
-  // Haiku: summaries and region labels are short, frequent-ish and simple.
-  ANTHROPIC_MODEL: z.string().min(1).default("claude-haiku-4-5"),
+  // Region and continent names, borderline moderation and image checks.
+  ANTHROPIC_MODEL: z.string().min(1).default("claude-haiku-4-5-20251001"),
+  // Hard daily budget for all Claude calls. At the cap, work waits; it is never skipped.
+  CLAUDE_DAILY_BUDGET_USD: blankAsUnset(z.coerce.number().nonnegative().default(1)),
   VOYAGE_API_KEY: optionalSecret,
-  VOYAGE_MODEL: z.string().min(1).default("voyage-4"),
+  VOYAGE_MODEL: z.string().min(1).default("voyage-4-lite"),
+  // Must match the halfvec(512) columns in the database.
+  VOYAGE_DIMENSIONS: blankAsUnset(z.coerce.number().pipe(z.literal(512)).default(512)),
+  // OpenAI Moderation API (free endpoint). Use a key from a project that can
+  // only call moderation (CLAUDE.md section 12).
+  OPENAI_API_KEY: optionalSecret,
 
   // S3-compatible object storage: Cloudflare R2 in production, Supabase
   // Storage's S3 endpoint locally. Optional until media lands in Phase 1.
-  S3_ENDPOINT: z.preprocess((value) => (value === "" ? undefined : value), z.url().optional()),
+  S3_ENDPOINT: blankAsUnset(z.url().optional()),
   S3_REGION: z.string().min(1).default("auto"),
   S3_ACCESS_KEY_ID: optionalSecret,
   S3_SECRET_ACCESS_KEY: optionalSecret,
   S3_PRIVATE_BUCKET: z.string().min(1).default("private"),
   S3_PUBLIC_BUCKET: z.string().min(1).default("public"),
 
-  // Protects scheduled job endpoints (tile rebakes, link rechecks).
+  // Shared secret for job routes called by the Worker's own cron handler.
   CRON_SECRET: optionalSecret,
 
-  // Growth tuning (brief 5.2). Decay is computed on read from this.
-  EARNED_SPACE_HALF_LIFE_DAYS: z.coerce.number().positive().default(30),
+  // Nightly encrypted backups (Phase 5). The Worker only ever holds the
+  // PUBLIC key (SPKI, base64); the private key stays offline with the owner.
+  BACKUP_PUBLIC_KEY: optionalSecret,
+  // Direct Postgres connection used only by the backup job.
+  BACKUP_DATABASE_URL: optionalSecret,
+
+  // Growth tuning. Decay is computed on read from this.
+  EARNED_SPACE_HALF_LIFE_DAYS: blankAsUnset(z.coerce.number().positive().default(30)),
+
+  // Cost guards (CLAUDE.md 7.5). Our limits are the spending cap for R2.
+  PLOT_MAX_MEDIA_BYTES: positiveInt(10 * 1024 * 1024),
+  PLOT_MAX_IMAGES: positiveInt(30),
+  PLOT_MAX_DRAWING_ELEMENTS: positiveInt(2000),
+  PLOT_MAX_SCENE_BYTES: positiveInt(1024 * 1024),
+  USER_MAX_UPLOADS_PER_DAY: positiveInt(30),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

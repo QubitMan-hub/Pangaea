@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   app:
-    name: Lint, typecheck, unit tests, build
+    name: Lint, typecheck, unit tests, builds
     runs-on: ubuntu-latest
     env:
       # Placeholders so env validation passes at build time; no real services
@@ -30,7 +30,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run format:check
       - run: npm test
-      - run: npm run build
+      # Runs `next build` itself, so there is no separate `npm run build` step.
+      - name: Next.js + Cloudflare Workers build (OpenNext)
+        run: npm run cf:build
 
   database:
     name: Migrations and database tests

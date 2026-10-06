@@ -1,0 +1,37 @@
+// Cloudflare Workers config (OpenNext). Free plan in development; Workers Paid
+// ($5/month) is planned for public launch (CLAUDE.md 2.1 rule 14).
+// Secrets never go here: use `wrangler secret put NAME`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pangaea",
+  // Custom entry: OpenNext's fetch handler plus our cron (scheduled) handler.
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "pangaea",
+    },
+  ],
+  // No "images" binding on purpose: Cloudflare Images is metered, and every
+  // image is already resized in the browser (next.config.ts sets unoptimized).
+  //
+  // Cron Triggers (free plan: 5 per account). Planned schedules live in
+  // src/lib/jobs/schedule.ts; a cron is registered here only once one of its
+  // jobs is implemented, so the Worker never wakes up for nothing. A unit test
+  // keeps the two in sync. Planned: "* * * * *", "*/5 * * * *",
+  // "17 * * * *", "23 3 * * *".
+  "triggers": {
+    "crons": [],
+  },
+  // Workers Observability: CPU time per request and per cron run, which is how
+  // we measure distance to the free plan's 10 ms limit. Never log personal data.
+  "observability": {
+    "enabled": true,
+  },
+}
