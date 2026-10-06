@@ -1,0 +1,7 @@
+-- Intentionally empty.
+--
+-- Reference data every environment needs (the frontier region, MVP missions)
+-- lives in migrations. Fake plots for testing the map are NOT seeded with
+-- SQL: per the brief, seed content must pass through moderation like any
+-- other content, so it will be loaded by a TypeScript seed script that goes
+-- through ModerationService (added with the moderation pipeline in Phase 1).
