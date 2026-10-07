@@ -1,13 +1,11 @@
 .next
+.open-next
+.wrangler
 node_modules
 coverage
 package-lock.json
 next-env.d.ts
 src/lib/supabase/database.types.ts
 supabase/.temp
-supabase/.branches
 CLAUDE.md
 AGENTS.md
-.open-next
-.wrangler
-cloudflare-env.d.ts

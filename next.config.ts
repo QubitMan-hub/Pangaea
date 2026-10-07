@@ -4,8 +4,8 @@ import createNextIntlPlugin from "next-intl/plugin";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  // Every image is resized and encoded in the browser before upload, so
-  // server-side optimization (metered Cloudflare Images) is never needed.
+  // Images are resized in the browser before upload; server-side optimization
+  // would use metered Cloudflare Images.
   images: { unoptimized: true },
   async headers() {
     return [
@@ -14,9 +14,8 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          // Pangaea pages are never meant to be framed by other sites. A full
-          // Content-Security-Policy comes with the editor in Phase 1, once we
-          // know what tldraw needs.
+          // A full Content-Security-Policy comes once Phase 1 shows what the
+          // editor and uploads need.
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
         ],
@@ -27,5 +26,4 @@ const nextConfig: NextConfig = {
 
 export default createNextIntlPlugin()(nextConfig);
 
-// Lets `next dev` use Cloudflare bindings locally.
 initOpenNextCloudflareForDev();

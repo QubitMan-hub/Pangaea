@@ -1,8 +1,9 @@
+# CI only: GitHub's terms limit hosted runners to building, testing and deploying.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
   pull_request:
 
 concurrency:
@@ -11,11 +12,10 @@ concurrency:
 
 jobs:
   app:
-    name: Lint, typecheck, unit tests, builds
+    name: Lint, typecheck, unit tests, Cloudflare build
     runs-on: ubuntu-latest
     env:
-      # Placeholders so env validation passes at build time; no real services
-      # are contacted.
+      # Placeholders so env validation passes at build time; nothing is contacted.
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder
       SUPABASE_SECRET_KEY: ci-placeholder
@@ -23,34 +23,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run format:check
-      - run: npm test
-      # Runs `next build` itself, so there is no separate `npm run build` step.
-      - name: Next.js + Cloudflare Workers build (OpenNext)
-        run: npm run cf:build
+      - run: npm run check
+      # Runs `next build` itself, then bundles for Workers.
+      - run: npx opennextjs-cloudflare build
 
   database:
-    name: Migrations and database tests
+    name: Migrations, security tests, generated types
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
       - run: npm ci
-      - name: Start Supabase (applies migrations)
-        run: npx supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,realtime
-      - name: Database tests (RLS and moderation invariants)
-        run: npx supabase test db
-      - name: Database lint
-        run: npx supabase db lint --level warning --fail-on warning
-      - name: Generated types are up to date
-        run: |
-          npx supabase gen types typescript --local > src/lib/supabase/database.types.ts
-          git diff --exit-code -- src/lib/supabase/database.types.ts
+      - run: npx supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,realtime
+      - run: npx supabase test db
+      - run: npx supabase db lint --level warning --fail-on warning
+      - name: Generated types are current
+        run: npm run db:types && git diff --exit-code -- src/lib/supabase/database.types.ts

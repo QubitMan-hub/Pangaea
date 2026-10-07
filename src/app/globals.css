@@ -1,15 +1,8 @@
 @import "tailwindcss";
 
-/*
- * Design tokens: the "living atlas" (docs/design.md). Light is the day chart,
- * dark is the night chart. The default follows the system setting; a
- * data-theme attribute on <html> overrides it either way.
- * Contrast and color-vision checks for these values are recorded in
- * docs/design.md section 2.
- */
+/* Tokens from docs/design.md (contrast checked there). */
 :root {
   --sea: #e3eaec;
-  --land: #f1ead6;
   --sheet: #f7f9f9;
   --ink: #15202a;
   --ink-2: #44515c;
@@ -19,24 +12,14 @@
   --success: #2a6b45;
   --warning: #855000;
   --danger: #ad2a20;
-  /* Region hues (fixed order; assigned per region by adjacency). */
-  --region-1: #c8553d;
-  --region-2: #0a8fb0;
-  --region-3: #bf8a14;
-  --region-4: #9a46a8;
-  --region-5: #4f9a3a;
-  --region-6: #5a4fc4;
-  --region-7: #d0517f;
-  --region-8: #2f6fd0;
-  --region-wash: 26%;
-  --shadow-sheet: 0 1px 0 var(--line), 0 8px 24px rgb(21 32 42 / 0.08);
   color-scheme: light;
 }
 
+/* Dark values appear twice: once for the system setting, once for the
+   explicit toggle, which must win in both directions. Keep them identical. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --sea: #0b1720;
-    --land: #1d2620;
     --sheet: #13232e;
     --ink: #e6edef;
     --ink-2: #b3c0c6;
@@ -46,23 +29,12 @@
     --success: #7cc79a;
     --warning: #e0a54a;
     --danger: #f08a80;
-    --region-1: #e06a4f;
-    --region-2: #22a6c4;
-    --region-3: #d9a23a;
-    --region-4: #b46ac2;
-    --region-5: #6bb356;
-    --region-6: #7d74e0;
-    --region-7: #e06a95;
-    --region-8: #4f8ae6;
-    --region-wash: 30%;
-    --shadow-sheet: 0 0 0 1px var(--line);
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
   --sea: #0b1720;
-  --land: #1d2620;
   --sheet: #13232e;
   --ink: #e6edef;
   --ink-2: #b3c0c6;
@@ -72,23 +44,11 @@
   --success: #7cc79a;
   --warning: #e0a54a;
   --danger: #f08a80;
-  --region-1: #e06a4f;
-  --region-2: #22a6c4;
-  --region-3: #d9a23a;
-  --region-4: #b46ac2;
-  --region-5: #6bb356;
-  --region-6: #7d74e0;
-  --region-7: #e06a95;
-  --region-8: #4f8ae6;
-  --region-wash: 30%;
-  --shadow-sheet: 0 0 0 1px var(--line);
   color-scheme: dark;
 }
 
-/* Tokens exposed to Tailwind as utilities (bg-sea, text-ink, border-line, ...). */
 @theme inline {
   --color-sea: var(--sea);
-  --color-land: var(--land);
   --color-sheet: var(--sheet);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
@@ -98,12 +58,8 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
-  --font-sans: var(--font-plex-sans), var(--font-plex-devanagari), system-ui, sans-serif;
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
   --font-condensed: var(--font-plex-condensed), "Arial Narrow", system-ui, sans-serif;
-  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
-  --font-region: var(--font-plex-sans-italic), var(--font-plex-sans), system-ui, sans-serif;
-  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-sheet: cubic-bezier(0.3, 0, 0.2, 1);
 }
 
 body {
@@ -112,11 +68,6 @@ body {
   font-family: var(--font-sans);
 }
 
-:lang(hi) {
-  line-height: 1.65;
-}
-
-/* Keyboard focus is always visible (docs/design.md section 10). */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
